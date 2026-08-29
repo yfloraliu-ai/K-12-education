@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { GenreId, GenreInfo, Grade, Project } from "../types";
-import { genresForGrade, sparksFor } from "../data/curriculum";
+import { genresForGrade, topicCategoriesFor } from "../data/curriculum";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -34,6 +34,7 @@ export default function Home({
 }: Props) {
   const [picking, setPicking] = useState<GenreInfo | null>(null);
   const [customTopic, setCustomTopic] = useState("");
+  const [activeCat, setActiveCat] = useState<string>("");
   const genres = genresForGrade(grade);
 
   // The most recently touched unfinished piece, ready to continue.
@@ -105,6 +106,7 @@ export default function Home({
                 onClick={() => {
                   setPicking(g);
                   setCustomTopic("");
+                  setActiveCat(topicCategoriesFor(g.id, grade)[0]?.id ?? "");
                 }}
                 className="border-2 border-line hover:border-ink rounded-lg p-5 text-left transition"
               >
@@ -170,40 +172,76 @@ export default function Home({
               {picking.name}: <span className="hl-y px-1">pick a topic</span>
             </span>
           </h2>
-          <p className="text-stone-500 mb-6">Choose a spark, or bring your own idea.</p>
-          <div className="grid md:grid-cols-2 gap-2.5 mb-6">
-            {sparksFor(picking.id, grade).map((spark) => (
-              <button
-                key={spark}
-                onClick={() => onNewProject(picking.id, spark)}
-                className="text-left border-2 border-line hover:border-ink rounded-lg px-4 py-3.5 font-semibold transition"
-              >
-                {spark}
-              </button>
-            ))}
-          </div>
+          <p className="text-stone-500 mb-6">Bring your own idea, or pick a spark from a theme.</p>
+
+          {/* Your own topic — always front and centre */}
           <form
-            className="flex gap-2"
+            className="border-2 border-ink rounded-lg p-4 mb-7"
             onSubmit={(e) => {
               e.preventDefault();
               if (customTopic.trim()) onNewProject(picking.id, customTopic.trim());
             }}
           >
-            <input
-              value={customTopic}
-              onChange={(e) => setCustomTopic(e.target.value)}
-              maxLength={200}
-              placeholder="My own idea…"
-              className="flex-1 rounded-full border-2 border-ink px-5 py-3 focus:outline-none focus:ring-4 focus:ring-hy"
-            />
-            <button
-              type="submit"
-              disabled={!customTopic.trim()}
-              className="bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold rounded-full px-7 transition flex items-center gap-2"
-            >
-              Go <ArrowRightIcon size={16} className="text-hy" />
-            </button>
+            <label className="block font-bold text-sm mb-2">
+              <span className="hl-y px-1">My own topic</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                value={customTopic}
+                onChange={(e) => setCustomTopic(e.target.value)}
+                maxLength={200}
+                placeholder="Type any topic you like…"
+                className="flex-1 rounded-full border-2 border-ink px-5 py-3 focus:outline-none focus:ring-4 focus:ring-hy"
+              />
+              <button
+                type="submit"
+                disabled={!customTopic.trim()}
+                className="bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold rounded-full px-7 transition flex items-center gap-2"
+              >
+                Go <ArrowRightIcon size={16} className="text-hy" />
+              </button>
+            </div>
           </form>
+
+          {/* Theme categories */}
+          {(() => {
+            const categories = topicCategoriesFor(picking.id, grade);
+            const current = categories.find((c) => c.id === activeCat) ?? categories[0];
+            if (!current) return null;
+            return (
+              <>
+                <div className="text-xs font-bold uppercase tracking-widest text-stone-400 mb-3">
+                  Or pick a spark by theme
+                </div>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setActiveCat(cat.id)}
+                      className={`text-sm font-bold rounded-full px-4 py-2 border-2 transition ${
+                        cat.id === current.id
+                          ? "border-ink bg-ink text-white"
+                          : "border-ink hover:bg-hy"
+                      }`}
+                    >
+                      {cat.name}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid md:grid-cols-2 gap-2.5">
+                  {current.topics.map((topic) => (
+                    <button
+                      key={topic}
+                      onClick={() => onNewProject(picking.id, topic)}
+                      className="text-left border-2 border-line hover:border-ink rounded-lg px-4 py-3.5 font-semibold transition"
+                    >
+                      {topic}
+                    </button>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>
