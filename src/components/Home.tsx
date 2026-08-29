@@ -1,22 +1,47 @@
 import { useState } from "react";
 import type { GenreId, GenreInfo, Grade, Project } from "../types";
 import { genresForGrade, sparksFor } from "../data/curriculum";
-import { ArrowLeftIcon, ArrowRightIcon, GenreIcon, GymIcon, HL_CYCLE, LeafIcon } from "./icons";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  BookIcon,
+  GenreIcon,
+  GymIcon,
+  HL_CYCLE,
+  LeafIcon,
+} from "./icons";
 
 interface Props {
   name: string;
   grade: Grade;
-  project: Project | null;
+  projects: Project[];
   onNewProject: (genre: GenreId, topic: string) => void;
-  onContinue: () => void;
+  onOpenProject: (id: string) => void;
+  onJournal: () => void;
   onLessons: () => void;
   onChangeGrade: () => void;
 }
 
-export default function Home({ name, grade, project, onNewProject, onContinue, onLessons, onChangeGrade }: Props) {
+export default function Home({
+  name,
+  grade,
+  projects,
+  onNewProject,
+  onOpenProject,
+  onJournal,
+  onLessons,
+  onChangeGrade,
+}: Props) {
   const [picking, setPicking] = useState<GenreInfo | null>(null);
   const [customTopic, setCustomTopic] = useState("");
   const genres = genresForGrade(grade);
+
+  // The most recently touched unfinished piece, ready to continue.
+  const inProgress = [...projects]
+    .filter((p) => p.stage !== "shine")
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 2);
+  const finishedCount = projects.filter((p) => p.stage === "shine").length;
 
   return (
     <div className="min-h-screen p-4 md:p-10 max-w-5xl mx-auto">
@@ -40,28 +65,36 @@ export default function Home({ name, grade, project, onNewProject, onContinue, o
       <p className="text-stone-500 text-lg mb-8">What are we writing today?</p>
       <div className="h-0.5 bg-ink mb-8" />
 
-      {project && !picking && (
-        <button
-          onClick={onContinue}
-          className="w-full mb-8 border-2 border-ink rounded-lg p-5 text-left hover:bg-soft transition flex items-center justify-between gap-4"
-        >
-          <div>
-            <div className="text-xs font-bold uppercase tracking-widest text-stone-400 mb-1">
-              Continue writing
-            </div>
-            <div className="font-extrabold text-xl">
-              <span className="hl-b px-1">{project.topic || "My piece"}</span>
-            </div>
-            <div className="text-sm text-stone-500 capitalize mt-1">
-              {project.genre} · {project.stage} step
-            </div>
-          </div>
-          <ArrowRightIcon size={24} />
-        </button>
-      )}
-
       {!picking ? (
         <>
+          {inProgress.length > 0 && (
+            <div className="mb-8 space-y-2.5">
+              <div className="text-xs font-bold uppercase tracking-widest text-stone-400">
+                Continue writing
+              </div>
+              {inProgress.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onOpenProject(p.id)}
+                  className="w-full border-2 border-ink rounded-lg p-4 text-left hover:bg-soft transition flex items-center justify-between gap-4"
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <GenreIcon genre={p.genre} size={22} className="shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-extrabold text-lg truncate">
+                        <span className="hl-b px-1">{p.topic || "My piece"}</span>
+                      </div>
+                      <div className="text-sm text-stone-500 capitalize mt-0.5">
+                        {p.genre} · {p.stage} step
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRightIcon size={22} className="shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
+
           <h2 className="font-extrabold text-xl mb-4">
             <span className="hl-g px-1">Start something new</span>
           </h2>
@@ -73,7 +106,7 @@ export default function Home({ name, grade, project, onNewProject, onContinue, o
                   setPicking(g);
                   setCustomTopic("");
                 }}
-                className="border-2 border-line hover:border-ink rounded-lg p-5 text-left transition group"
+                className="border-2 border-line hover:border-ink rounded-lg p-5 text-left transition"
               >
                 <GenreIcon genre={g.id} size={26} className="mb-3 text-ink" />
                 <div className="font-extrabold text-lg">
@@ -84,23 +117,44 @@ export default function Home({ name, grade, project, onNewProject, onContinue, o
             ))}
           </div>
 
-          <button
-            onClick={onLessons}
-            className="w-full border-2 border-ink rounded-lg p-5 text-left hover:bg-soft transition flex items-center justify-between gap-4"
-          >
-            <div className="flex items-center gap-4">
-              <GymIcon size={28} />
-              <div>
-                <div className="font-extrabold text-xl">
-                  <span className="hl-p px-1">Skill Gym</span>
-                </div>
-                <div className="text-sm text-stone-500 mt-0.5">
-                  Quick workouts: topic sentences, hamburger paragraphs, word power-ups and more
+          <div className="grid md:grid-cols-2 gap-3">
+            <button
+              onClick={onJournal}
+              className="border-2 border-ink rounded-lg p-5 text-left hover:bg-soft transition flex items-center justify-between gap-4"
+            >
+              <div className="flex items-center gap-4">
+                <BookIcon size={26} />
+                <div>
+                  <div className="font-extrabold text-xl">
+                    <span className="hl-b px-1">My Journal</span>
+                  </div>
+                  <div className="text-sm text-stone-500 mt-0.5">
+                    {projects.length === 0
+                      ? "Your writing history lives here"
+                      : `${projects.length} ${projects.length === 1 ? "piece" : "pieces"} · ${finishedCount} finished`}
+                  </div>
                 </div>
               </div>
-            </div>
-            <ArrowRightIcon size={24} />
-          </button>
+              <ArrowRightIcon size={22} className="shrink-0" />
+            </button>
+            <button
+              onClick={onLessons}
+              className="border-2 border-ink rounded-lg p-5 text-left hover:bg-soft transition flex items-center justify-between gap-4"
+            >
+              <div className="flex items-center gap-4">
+                <GymIcon size={26} />
+                <div>
+                  <div className="font-extrabold text-xl">
+                    <span className="hl-p px-1">Skill Gym</span>
+                  </div>
+                  <div className="text-sm text-stone-500 mt-0.5">
+                    Topic sentences, word power-ups and more
+                  </div>
+                </div>
+              </div>
+              <ArrowRightIcon size={22} className="shrink-0" />
+            </button>
+          </div>
         </>
       ) : (
         <div className="pop-in">
