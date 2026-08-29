@@ -414,10 +414,11 @@ app.post("/api/coach", async (req, res) => {
       return;
     }
 
+    // Note: `temperature` is not sent — current Claude models (Opus 5 family)
+    // reject sampling parameters with a 400.
     const response = await getClaude().messages.create({
       model: CLAUDE_MODEL,
       max_tokens: 600,
-      temperature: 0.7,
       system: buildSystemPrompt(coachReq),
       messages: history,
     });
