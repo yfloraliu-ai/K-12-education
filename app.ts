@@ -60,6 +60,8 @@ interface CoachRequest {
   draft?: string;
   messages: ChatMessage[];
   action: CoachAction;
+  /** The genre+grade checklist shown in the app — the shared rubric. */
+  checklist?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +253,29 @@ Never rewrite their text, and never list more than one grow — one at a time.`,
 };
 
 // ---------------------------------------------------------------------------
+// Cross-curricular knowledge: Alberta Grade 6 Social Studies (2025 final)
+// ---------------------------------------------------------------------------
+
+const GRADE6_SOCIAL_STUDIES = `## Cross-curricular link — Alberta Grade 6 Social Studies
+This Grade 6 student's Social Studies curriculum is organized around three big ideas:
+- Time and Place: the relationships between people, place and time; Canada's
+  major physical regions; how Canada's political boundaries changed over time.
+- Systems: how political systems give structure to society; democracy as a
+  system where government is accountable to citizens, built on equality under
+  the law, justice, freedom and representation; what municipal, provincial and
+  federal governments each do; historical models of democracy — Ancient Athens
+  and the Haudenosaunee (Iroquois) Confederacy — and their influence on
+  Canadian democracy.
+- Citizenship: the rights and responsibilities of Canadian citizens; civic
+  participation, formal and informal (voting, petitions, letters to officials,
+  community action).
+When the student's topic touches these areas: offer curriculum vocabulary as
+word choices for THEM to use (democracy, representation, justice, governance,
+municipal, provincial, federal, Confederacy, civic participation, rights,
+responsibilities); and if a fact in their writing is mixed up, don't lecture —
+ask a guiding question that helps them check and fix it themselves.`;
+
+// ---------------------------------------------------------------------------
 // System prompt assembly
 // ---------------------------------------------------------------------------
 
@@ -303,11 +328,17 @@ ${BAND_VOICE[band]}
 ## ${GENRE_FRAMEWORK[req.genre]}
 
 ## ${STAGE_GUIDE[req.stage]}
-${
-  req.action !== "chat"
-    ? `\n## Special instruction for THIS reply\n${ACTION_GUIDE[req.action]}\n`
-    : ""
-}
+${req.grade === 6 ? `\n${GRADE6_SOCIAL_STUDIES}\n` : ""}${
+    req.checklist?.length
+      ? `\n## The checklist for this piece — the rubric you and the student share\n${req.checklist
+          .map((c) => `- ${c}`)
+          .join("\n")}\nTie every glow and grow to these criteria; name the criterion you're praising or growing.\n`
+      : ""
+  }${
+    req.action !== "chat"
+      ? `\n## Special instruction for THIS reply\n${ACTION_GUIDE[req.action]}\n`
+      : ""
+  }
 ## The student's plan so far
 ${planText || "(empty so far)"}
 
@@ -380,6 +411,9 @@ app.post("/api/coach", async (req, res) => {
       plan: body.plan && typeof body.plan === "object" ? body.plan : {},
       draft: String(body.draft ?? "").slice(0, 12000),
       messages: Array.isArray(body.messages) ? body.messages : [],
+      checklist: Array.isArray(body.checklist)
+        ? body.checklist.filter((c) => typeof c === "string").slice(0, 30).map((c) => c.slice(0, 200))
+        : [],
     };
 
     // Keep only the recent turns; the plan/draft context carries the state.

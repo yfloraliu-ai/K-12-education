@@ -10,6 +10,7 @@ export interface CoachPayload {
   draft: string;
   messages: ChatMessage[];
   action: CoachAction;
+  checklist: string[];
 }
 
 export async function askCoach(payload: CoachPayload): Promise<string> {

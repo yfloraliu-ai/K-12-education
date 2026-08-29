@@ -84,6 +84,7 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
           draft: p.draft,
           messages: outgoing,
           action,
+          checklist: checklist.map((c) => c.text),
         });
         onUpdate((prev) => ({
           ...prev,

@@ -331,9 +331,47 @@ const TOPIC_BANK: Record<string, Record<Band, Record<string, string[]>>> = {
 
 export function topicCategoriesFor(genreId: GenreId, grade: Grade): TopicCategory[] {
   const bank = TOPIC_BANK[genreId]?.[band(grade)] ?? {};
-  return Object.entries(bank).map(([id, topics]) => ({
+  const categories = Object.entries(bank).map(([id, topics]) => ({
     id,
     name: CATEGORY_NAMES[id] ?? id,
     topics,
   }));
+  // Curriculum tie-in: Grade 6 writers get a Social Studies theme aligned to
+  // Alberta's Grade 6 Social Studies organizing ideas.
+  if (grade === 6 && SOCIAL6_TOPICS[genreId]) {
+    categories.unshift({ id: "social6", name: "Social Studies (Gr 6)", topics: SOCIAL6_TOPICS[genreId] });
+  }
+  return categories;
 }
+
+// ---------------------------------------------------------------------------
+// Grade 6 Social Studies (Alberta, 2025 final): grade-gated topic category
+// aligned to the three organizing ideas — Time and Place, Systems, Citizenship.
+// ---------------------------------------------------------------------------
+
+export const SOCIAL6_TOPICS: Record<string, string[]> = {
+  story: [
+    "A day in the Athenian Assembly",
+    "A young messenger of the Haudenosaunee Confederacy",
+    "The class election that changed everything",
+    "Time-travelling to the day Alberta became a province",
+  ],
+  opinion: [
+    "Should the voting age be lowered to 16?",
+    "What makes a good citizen?",
+    "Should students help make the school rules?",
+    "Which democratic right matters most, and why?",
+  ],
+  report: [
+    "The three levels of government: who does what",
+    "Democracy in Ancient Athens",
+    "The Haudenosaunee Confederacy: an early democracy",
+    "The physical regions of Canada",
+  ],
+  letter: [
+    "A letter to my MLA about an issue in Alberta",
+    "A letter to city council proposing one change",
+    "A letter to the editor about a community issue",
+    "A letter persuading classmates to vote in the class election",
+  ],
+};
