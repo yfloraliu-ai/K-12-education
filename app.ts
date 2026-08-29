@@ -20,7 +20,12 @@ function getClaude(): Anthropic {
         "ANTHROPIC_API_KEY is not set. Add it to your .env file to enable the writing coach."
       );
     }
-    claudeClient = new Anthropic();
+    // Identity-linked API keys must send the workspace they act in on every
+    // request; plain keys ignore the header.
+    const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+    claudeClient = new Anthropic({
+      defaultHeaders: workspaceId ? { "anthropic-workspace-id": workspaceId } : undefined,
+    });
   }
   return claudeClient;
 }
@@ -318,7 +323,12 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", async (req, res) => {
-  const base = { ok: true, model: CLAUDE_MODEL, keySet: !!process.env.ANTHROPIC_API_KEY };
+  const base = {
+    ok: true,
+    model: CLAUDE_MODEL,
+    keySet: !!process.env.ANTHROPIC_API_KEY,
+    workspaceIdSet: !!process.env.ANTHROPIC_WORKSPACE_ID,
+  };
   if (req.query.probe === undefined) {
     res.json(base);
     return;
