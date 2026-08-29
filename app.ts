@@ -10,7 +10,7 @@ import Anthropic from "@anthropic-ai/sdk";
  * the system prompt pins the model to Socratic, step-by-step coaching.
  */
 
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5";
 
 let claudeClient: Anthropic | null = null;
 function getClaude(): Anthropic {
@@ -317,8 +317,29 @@ ${req.draft?.trim() ? `"""\n${req.draft.trim()}\n"""` : "(nothing written yet)"}
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, model: CLAUDE_MODEL, keySet: !!process.env.ANTHROPIC_API_KEY });
+app.get("/api/health", async (req, res) => {
+  const base = { ok: true, model: CLAUDE_MODEL, keySet: !!process.env.ANTHROPIC_API_KEY };
+  if (req.query.probe === undefined) {
+    res.json(base);
+    return;
+  }
+  // /api/health?probe=1 — makes one tiny real Claude call and reports the raw
+  // upstream error, so deployment problems (billing, model access, bad key)
+  // are diagnosable without guesswork.
+  try {
+    const r = await getClaude().messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 16,
+      messages: [{ role: "user", content: "Say OK." }],
+    });
+    res.json({ ...base, probe: "ok", stopReason: r.stop_reason });
+  } catch (error) {
+    const detail =
+      error instanceof Anthropic.APIError
+        ? { name: error.name, status: error.status, message: error.message }
+        : { message: error instanceof Error ? error.message : String(error) };
+    res.json({ ...base, ok: false, probe: "failed", error: detail });
+  }
 });
 
 const VALID_GRADES = [1, 2, 3, 4, 5, 6];
@@ -409,11 +430,30 @@ function describeError(error: unknown): { status: number; message: string } {
   if (error instanceof Anthropic.AuthenticationError) {
     return { status: 401, message: "Invalid or missing ANTHROPIC_API_KEY." };
   }
+  if (error instanceof Anthropic.PermissionDeniedError) {
+    return {
+      status: 403,
+      message: `This API key isn't allowed to use the model "${CLAUDE_MODEL}". (${error.message})`,
+    };
+  }
+  if (error instanceof Anthropic.NotFoundError) {
+    return {
+      status: 404,
+      message: `The model "${CLAUDE_MODEL}" wasn't found for this API key. Set CLAUDE_MODEL to a model your account can use. (${error.message})`,
+    };
+  }
+  if (error instanceof Anthropic.BadRequestError) {
+    // Most often a billing problem ("credit balance is too low") — surface it.
+    return { status: 400, message: `The Claude API rejected the request: ${error.message}` };
+  }
   if (error instanceof Anthropic.RateLimitError) {
     return { status: 429, message: "The coach is helping lots of writers right now — try again in a moment." };
   }
   if (error instanceof Anthropic.APIError) {
-    return { status: 502, message: "The coach had trouble answering. Please try again." };
+    return {
+      status: 502,
+      message: `The coach had trouble answering (Claude API error ${error.status ?? "?"}: ${error.message}). Please try again.`,
+    };
   }
   if (error instanceof Error && error.message.includes("ANTHROPIC_API_KEY")) {
     return { status: 500, message: error.message };
