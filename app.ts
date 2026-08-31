@@ -471,6 +471,183 @@ app.post("/api/coach", async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Report card: five-dimension rubric + sentence-by-sentence commentary
+// ---------------------------------------------------------------------------
+
+interface ReportCardRequest {
+  grade: Grade;
+  genre: GenreId;
+  topic: string;
+  studentName?: string;
+  draft: string;
+  checklist: string[];
+}
+
+function buildReportCardPrompt(req: ReportCardRequest): string {
+  const band = gradeBand(req.grade);
+  return `You are Coach Maple, a warm, honest writing coach assessing a Grade
+${req.grade} Alberta student's FINISHED piece — ${GENRE_LABEL[req.genre]}${
+    req.topic ? ` about "${req.topic}"` : ""
+  }. Produce a report card the student reads themselves.
+
+Respond with STRICT JSON only — no markdown fences, no text outside the JSON —
+matching exactly this shape:
+{
+  "rubric": [
+    { "dimension": "Content", "level": 1, "comment": "..." },
+    { "dimension": "Organization", "level": 1, "comment": "..." },
+    { "dimension": "Sentence Structure", "level": 1, "comment": "..." },
+    { "dimension": "Vocabulary", "level": 1, "comment": "..." },
+    { "dimension": "Conventions", "level": 1, "comment": "..." }
+  ],
+  "sentences": [
+    { "text": "...", "comments": [ { "kind": "praise", "note": "..." } ] }
+  ],
+  "overall": "..."
+}
+
+## Rubric rules
+- The five dimensions, in that exact order: Content (ideas and details),
+  Organization (structure and flow for this genre), Sentence Structure
+  (variety, correctness of construction), Vocabulary (word choice),
+  Conventions (spelling, capitals, punctuation).
+- "level": 1 = Limited, 2 = Adequate, 3 = Proficient, 4 = Excellent — judged
+  against what a Grade ${req.grade} writer is expected to do (see the
+  checklist below), never against adult standards. Be honest — not everything
+  is a 4 — but never harsh.
+- Each "comment": 1–2 sentences a Grade ${req.grade} child can read alone:
+  WHY this level, and the one thing that would lift it to the next level.
+
+## Sentence-by-sentence rules
+- Split the draft into its sentences, in order. EVERY sentence gets an entry
+  with its exact "text".
+- At most 2 comments per sentence — only the most valuable. A strong sentence
+  gets one "praise" comment naming exactly what works.
+- "grammar" comments (also use for spelling/punctuation): NAME the error type,
+  QUOTE the exact word(s) where it happens, and EXPLAIN the rule — why it is
+  wrong. Do NOT write the corrected sentence or hand over the fixed words; end
+  with a nudge like "Can you fix it?". The student must make the repair.
+- "structure" comments: when a sentence is bare or repeats the same pattern as
+  its neighbours (e.g. every sentence starts "They..."), you MAY give concrete
+  revision suggestions — combine two sentences with because/although/so, add
+  where/when/why, start with a different opener — and you may show the
+  technique with a tiny example about a DIFFERENT subject, never their own
+  sentence rewritten.
+- "vocabulary" comments: you MAY suggest 2–3 stronger, grade-appropriate
+  replacements for a tired word, each with a quick meaning hint. The student
+  chooses.
+- "content" comments: a spot that needs a detail, an example, or accuracy
+  checked — ask the question that would improve it.
+- Do NOT invent problems. A correct, clear sentence deserves praise, not a
+  manufactured suggestion.
+
+## How to speak to this student
+${BAND_VOICE[band]}
+
+## What a Grade ${req.grade} writer is expected to do
+${BAND_SKILLS[band]}
+${req.grade === 6 ? `\n${GRADE6_SOCIAL_STUDIES}\n` : ""}
+## The checklist for this piece (the shared rubric)
+${req.checklist.map((c) => `- ${c}`).join("\n") || "(none provided)"}
+
+## "overall"
+2–3 warm sentences: the piece's biggest strength, then the single most
+valuable next step as a writer. Address the student${
+    req.studentName?.trim() ? ` by name (${req.studentName.trim()})` : ""
+  }.
+
+## The student's finished piece
+"""
+${req.draft.trim()}
+"""`;
+}
+
+interface RubricRow {
+  dimension: string;
+  level: number;
+  comment: string;
+}
+interface SentenceNote {
+  text: string;
+  comments: { kind: string; note: string }[];
+}
+
+const VALID_KINDS = new Set(["praise", "grammar", "structure", "vocabulary", "content"]);
+
+function parseReportCard(raw: string): { rubric: RubricRow[]; sentences: SentenceNote[]; overall: string } | null {
+  try {
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    const data = JSON.parse(cleaned);
+    if (!Array.isArray(data.rubric) || !Array.isArray(data.sentences)) return null;
+    const rubric: RubricRow[] = data.rubric.slice(0, 5).map((r: Record<string, unknown>) => ({
+      dimension: String(r.dimension ?? "").slice(0, 40),
+      level: Math.min(4, Math.max(1, Math.round(Number(r.level) || 1))),
+      comment: String(r.comment ?? "").slice(0, 600),
+    }));
+    if (rubric.length !== 5) return null;
+    const sentences: SentenceNote[] = data.sentences.slice(0, 80).map((s: Record<string, unknown>) => ({
+      text: String(s.text ?? "").slice(0, 600),
+      comments: (Array.isArray(s.comments) ? s.comments : [])
+        .slice(0, 3)
+        .map((c: Record<string, unknown>) => ({
+          kind: VALID_KINDS.has(String(c.kind)) ? String(c.kind) : "content",
+          note: String(c.note ?? "").slice(0, 800),
+        })),
+    }));
+    return { rubric, sentences, overall: String(data.overall ?? "").slice(0, 1200) };
+  } catch {
+    return null;
+  }
+}
+
+app.post("/api/report-card", async (req, res) => {
+  try {
+    const body = req.body as Partial<ReportCardRequest>;
+    if (
+      !VALID_GRADES.includes(Number(body.grade)) ||
+      !VALID_GENRES.includes(String(body.genre)) ||
+      !String(body.draft ?? "").trim()
+    ) {
+      res.status(400).json({ error: "Invalid report card request." });
+      return;
+    }
+    const rcReq: ReportCardRequest = {
+      grade: Number(body.grade) as Grade,
+      genre: body.genre as GenreId,
+      topic: String(body.topic ?? "").slice(0, 300),
+      studentName: String(body.studentName ?? "").slice(0, 60),
+      draft: String(body.draft).slice(0, 12000),
+      checklist: Array.isArray(body.checklist)
+        ? body.checklist.filter((c) => typeof c === "string").slice(0, 30).map((c) => c.slice(0, 200))
+        : [],
+    };
+
+    const response = await getClaude().messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 4000,
+      system: buildReportCardPrompt(rcReq),
+      messages: [{ role: "user", content: "[Generate the report card JSON now.]" }],
+    });
+    const raw = response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+
+    const card = parseReportCard(raw);
+    if (!card) {
+      console.error("/api/report-card unparseable output:", raw.slice(0, 400));
+      res.status(502).json({ error: "The report card came back garbled — please try again." });
+      return;
+    }
+    res.json(card);
+  } catch (error) {
+    const { status, message } = describeError(error);
+    console.error("/api/report-card failed:", error);
+    res.status(status).json({ error: message });
+  }
+});
+
 function describeError(error: unknown): { status: number; message: string } {
   if (error instanceof Anthropic.AuthenticationError) {
     return { status: 401, message: "Invalid or missing ANTHROPIC_API_KEY." };

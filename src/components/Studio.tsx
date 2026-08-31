@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import type { CoachAction, Project, Stage } from "../types";
 import { GENRES, checklistForGrade, plannerForGrade } from "../data/curriculum";
-import { askCoach } from "../services/api";
+import { askCoach, fetchReportCard } from "../services/api";
 import CoachChat from "./CoachChat";
 import Checklist from "./Checklist";
+import ReportCard from "./ReportCard";
 import {
   ArrowRightIcon,
   CopyIcon,
@@ -117,6 +118,49 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
     if (project.stage === "shine") {
       confetti({ particleCount: 130, spread: 80, origin: { y: 0.6 }, colors: FLUORO });
     }
+  }, [project.stage]);
+
+  // Report card: written once per finished draft; re-written if the draft
+  // changed since (e.g. the student went back to Polish and edited).
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const reportRequested = useRef<string | null>(null);
+
+  const loadReportCard = useCallback(async () => {
+    const p = projectRef.current;
+    if (!p.draft.trim()) return;
+    reportRequested.current = p.draft;
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const card = await fetchReportCard({
+        grade: p.grade,
+        genre: p.genre,
+        topic: p.topic,
+        studentName,
+        draft: p.draft,
+        checklist: checklistForGrade(GENRES.find((g) => g.id === p.genre)!, p.grade).map((c) => c.text),
+      });
+      onUpdate((prev) => ({ ...prev, reportCard: { draft: p.draft, card }, updatedAt: Date.now() }));
+    } catch (e) {
+      reportRequested.current = null;
+      setReportError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setReportLoading(false);
+    }
+  }, [onUpdate, studentName]);
+
+  useEffect(() => {
+    if (
+      project.stage === "shine" &&
+      project.draft.trim() &&
+      project.reportCard?.draft !== project.draft &&
+      reportRequested.current !== project.draft &&
+      !reportLoading
+    ) {
+      loadReportCard();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.stage]);
 
   const setStage = (stage: Stage) => onUpdate((p) => ({ ...p, stage, updatedAt: Date.now() }));
@@ -327,6 +371,12 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
                   </button>
                 </div>
               </div>
+              <ReportCard
+                card={project.reportCard?.draft === project.draft ? project.reportCard.card : null}
+                loading={reportLoading}
+                error={reportError}
+                onRetry={loadReportCard}
+              />
               <Checklist
                 items={checklist}
                 checked={project.checked}

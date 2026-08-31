@@ -14,6 +14,25 @@ export interface ChatMessage {
   content: string;
 }
 
+export type CommentKind = "praise" | "grammar" | "structure" | "vocabulary" | "content";
+
+export interface RubricRow {
+  dimension: string;
+  level: number; // 1 Limited · 2 Adequate · 3 Proficient · 4 Excellent
+  comment: string;
+}
+
+export interface SentenceNote {
+  text: string;
+  comments: { kind: CommentKind; note: string }[];
+}
+
+export interface ReportCard {
+  rubric: RubricRow[];
+  sentences: SentenceNote[];
+  overall: string;
+}
+
 export interface Project {
   id: string;
   grade: Grade;
@@ -26,6 +45,8 @@ export interface Project {
   /** Chat history is kept per stage so each step starts with a fresh kickoff. */
   kickedOff: Partial<Record<Stage, boolean>>;
   checked: Record<string, boolean>;
+  /** The report card, plus the draft text it was written for (stale check). */
+  reportCard?: { draft: string; card: ReportCard } | null;
   createdAt: number;
   updatedAt: number;
 }
