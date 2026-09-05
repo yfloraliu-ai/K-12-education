@@ -33,6 +33,9 @@ export interface ReportCard {
   overall: string;
 }
 
+/** What the student decided about one sentence's feedback. */
+export type SentenceMark = "revised" | "kept";
+
 export interface Project {
   id: string;
   grade: Grade;
@@ -45,8 +48,15 @@ export interface Project {
   /** Chat history is kept per stage so each step starts with a fresh kickoff. */
   kickedOff: Partial<Record<Stage, boolean>>;
   checked: Record<string, boolean>;
-  /** The report card, plus the draft text it was written for (stale check). */
-  reportCard?: { draft: string; card: ReportCard } | null;
+  /**
+   * The report card, the draft text it was written for (stale check), and how
+   * the student has acted on each sentence's feedback.
+   */
+  reportCard?: {
+    draft: string;
+    card: ReportCard;
+    marks?: Record<number, SentenceMark>;
+  } | null;
   createdAt: number;
   updatedAt: number;
 }

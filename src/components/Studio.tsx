@@ -6,6 +6,7 @@ import { askCoach, fetchReportCard } from "../services/api";
 import CoachChat from "./CoachChat";
 import Checklist from "./Checklist";
 import ReportCard from "./ReportCard";
+import AnnotatedDraft from "./AnnotatedDraft";
 import {
   ArrowRightIcon,
   CopyIcon,
@@ -125,6 +126,8 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const reportRequested = useRef<string | null>(null);
+  /** The card only counts while it still describes the current draft. */
+  const card = project.reportCard?.draft === project.draft ? project.reportCard.card : null;
 
   const loadReportCard = useCallback(async () => {
     const p = projectRef.current;
@@ -347,10 +350,48 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
                     Here is your finished piece. Read it out loud and be proud.
                   </p>
                 </div>
-                <div className="border-2 border-line rounded-lg p-6 whitespace-pre-wrap text-[16px] leading-loose">
-                  {project.draft}
-                </div>
-                <div className="flex gap-2 mt-5">
+                {card ? (
+                  <AnnotatedDraft
+                    draft={project.draft}
+                    card={card}
+                    marks={project.reportCard?.marks ?? {}}
+                    onRevise={(index, start, end, newText) =>
+                      onUpdate((p) => {
+                        if (!p.reportCard) return p;
+                        const nextDraft = p.draft.slice(0, start) + newText + p.draft.slice(end);
+                        const sentences = p.reportCard.card.sentences.map((s, i) =>
+                          i === index ? { ...s, text: newText } : s
+                        );
+                        return {
+                          ...p,
+                          draft: nextDraft,
+                          reportCard: {
+                            // Keep draft in sync so the card isn't seen as stale
+                            // and silently regenerated behind the student.
+                            draft: nextDraft,
+                            card: { ...p.reportCard.card, sentences },
+                            marks: { ...p.reportCard.marks, [index]: "revised" },
+                          },
+                          updatedAt: Date.now(),
+                        };
+                      })
+                    }
+                    onMark={(index, mark) =>
+                      onUpdate((p) => {
+                        if (!p.reportCard) return p;
+                        const marks = { ...p.reportCard.marks };
+                        if (mark) marks[index] = mark;
+                        else delete marks[index];
+                        return { ...p, reportCard: { ...p.reportCard, marks }, updatedAt: Date.now() };
+                      })
+                    }
+                  />
+                ) : (
+                  <div className="border-2 border-line rounded-lg p-6 whitespace-pre-wrap text-[16px] leading-loose">
+                    {project.draft}
+                  </div>
+                )}
+                <div className="flex gap-2 mt-5 flex-wrap">
                   <button
                     onClick={() => navigator.clipboard?.writeText(project.draft)}
                     className="flex-1 border-2 border-ink hover:bg-soft font-bold rounded-full py-2.5 transition flex items-center justify-center gap-2"
@@ -364,6 +405,13 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
                     <PrinterIcon size={15} /> Print
                   </button>
                   <button
+                    onClick={loadReportCard}
+                    disabled={reportLoading}
+                    className="flex-1 border-2 border-ink hover:bg-hy disabled:opacity-40 font-bold rounded-full py-2.5 transition flex items-center justify-center gap-2"
+                  >
+                    <SparkleIcon size={15} /> Re-check
+                  </button>
+                  <button
                     onClick={onNewPiece}
                     className="flex-1 bg-ink hover:bg-stone-700 text-white font-bold rounded-full py-2.5 transition flex items-center justify-center gap-2"
                   >
@@ -372,7 +420,8 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
                 </div>
               </div>
               <ReportCard
-                card={project.reportCard?.draft === project.draft ? project.reportCard.card : null}
+                card={card}
+                marks={project.reportCard?.marks ?? {}}
                 loading={reportLoading}
                 error={reportError}
                 onRetry={loadReportCard}
@@ -388,8 +437,10 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
           )}
         </div>
 
-        {/* Right: coach chat */}
-        <div className="h-[70vh] lg:h-auto lg:min-h-0">
+        {/* Right: coach chat — fixed to one screen tall; messages scroll inside
+            their own scrollbar, and the panel stays in view while the (possibly
+            long) left column scrolls. */}
+        <div className="h-[70vh] lg:h-[calc(100vh-10rem)] lg:self-start lg:sticky lg:top-6">
           <CoachChat
             messages={project.messages}
             busy={busy}

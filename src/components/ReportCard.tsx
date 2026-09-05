@@ -1,8 +1,10 @@
-import type { CommentKind, ReportCard as ReportCardData } from "../types";
-import { LeafIcon } from "./icons";
+import type { CommentKind, ReportCard as ReportCardData, SentenceMark } from "../types";
+import { CheckIcon, LeafIcon } from "./icons";
 
 interface Props {
   card: ReportCardData | null;
+  /** What the student decided about each sentence, up in the piece itself. */
+  marks: Record<number, SentenceMark>;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
@@ -23,7 +25,7 @@ const KINDS: Record<CommentKind, { label: string; hl: string }> = {
   content: { label: "Ideas", hl: "hl-b" },
 };
 
-export default function ReportCard({ card, loading, error, onRetry }: Props) {
+export default function ReportCard({ card, marks, loading, error, onRetry }: Props) {
   return (
     <div className="bg-white rounded-lg border-2 border-ink p-5 md:p-6">
       <h2 className="font-extrabold text-xl mb-1">
@@ -101,6 +103,14 @@ export default function ReportCard({ card, loading, error, onRetry }: Props) {
                   <p className="text-[14.5px] font-semibold leading-relaxed mb-1.5">
                     <span className="text-stone-300 font-extrabold mr-1.5">{i + 1}.</span>
                     “{s.text}”
+                    {marks[i] === "revised" && (
+                      <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-extrabold hl-g px-1">
+                        <CheckIcon size={11} /> Fixed
+                      </span>
+                    )}
+                    {marks[i] === "kept" && (
+                      <span className="ml-2 text-[11px] font-extrabold text-stone-400">Kept as is</span>
+                    )}
                   </p>
                   {s.comments.length === 0 ? (
                     <p className="text-[13px] text-stone-400 font-medium">Nothing to add — this one works.</p>
