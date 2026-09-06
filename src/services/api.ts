@@ -1,4 +1,5 @@
 import type { ChatMessage, CoachAction, Grade, GenreId, ReportCard, Stage } from "../types";
+import { deviceId } from "./account";
 
 export interface CoachPayload {
   grade: Grade;
@@ -11,6 +12,7 @@ export interface CoachPayload {
   messages: ChatMessage[];
   action: CoachAction;
   checklist: string[];
+  piece: string;
 }
 
 export async function fetchReportCard(payload: {
@@ -20,11 +22,12 @@ export async function fetchReportCard(payload: {
   studentName?: string;
   draft: string;
   checklist: string[];
+  piece: string;
 }): Promise<ReportCard> {
   const res = await fetch("/api/report-card", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, device: deviceId() }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -37,7 +40,7 @@ export async function askCoach(payload: CoachPayload): Promise<string> {
   const res = await fetch("/api/coach", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, device: deviceId() }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

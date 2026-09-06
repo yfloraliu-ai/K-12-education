@@ -6,6 +6,8 @@ import Studio from "./components/Studio";
 import Lessons from "./components/Lessons";
 import Journal from "./components/Journal";
 import Paywall from "./components/Paywall";
+import SignIn from "./components/SignIn";
+import { fetchMe, spendCredit, type MeResponse } from "./services/account";
 
 const STORAGE_KEY = "maple-writing-coach-v1";
 
@@ -45,12 +47,32 @@ function loadState(): PersistedState {
   return { name: "", grade: null, projects: [], lessonsDone: {}, plan: "free" };
 }
 
-type View = "home" | "studio" | "lessons" | "journal" | "paywall";
+type View = "home" | "studio" | "lessons" | "journal" | "paywall" | "signin";
 
 export default function App() {
   const [state, setState] = useState<PersistedState>(loadState);
   const [view, setView] = useState<View>("home");
   const [currentId, setCurrentId] = useState<string | null>(null);
+  /** Server truth about plan and credits; null until the first fetch lands. */
+  const [me, setMe] = useState<MeResponse | null>(null);
+  const [signInReason, setSignInReason] = useState<"subscribe" | "restore">("restore");
+
+  const refreshMe = () => {
+    fetchMe()
+      .then(setMe)
+      .catch(() => setMe(null)); // offline or accounts not configured — stay local
+  };
+
+  useEffect(() => {
+    refreshMe();
+    // Coming back from Stripe or a sign-in link: clean the URL and re-check.
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("upgraded") || params.has("signin") || params.has("upgrade_cancelled")) {
+      window.history.replaceState({}, "", window.location.pathname);
+      const timer = setTimeout(refreshMe, 1500); // give the webhook a moment
+      return () => clearTimeout(timer);
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -71,11 +93,15 @@ export default function App() {
     );
   }
 
-  const isPro = state.plan === "pro";
-  const creditsUsed = state.projects.filter((p) => p.creditCounted).length;
-  const creditsLeft = Math.max(0, FREE_CREDITS - creditsUsed);
+  const isPro = me?.pro ?? state.plan === "pro";
+  // Server metering is the truth when it's switched on; otherwise the browser
+  // keeps its own tally, as it did before accounts existed.
+  const creditsUsed = me?.features.metered
+    ? me.creditsUsed
+    : state.projects.filter((p) => p.creditCounted).length;
+  const creditsLeft = isPro ? FREE_CREDITS : Math.max(0, FREE_CREDITS - creditsUsed);
   // Three topics total on the free plan — a fourth needs a subscription.
-  const canStartNew = isPro || state.projects.length < FREE_CREDITS;
+  const canStartNew = isPro || creditsUsed < FREE_CREDITS;
 
   const startProject = (genre: GenreId, topic: string) => {
     if (!canStartNew) {
@@ -116,6 +142,13 @@ export default function App() {
         studentName={state.name}
         canFinish={isPro || !!current.creditCounted || creditsLeft > 0}
         onNeedsUpgrade={() => setView("paywall")}
+        onFinish={async () => {
+          if (isPro || current.creditCounted) return true;
+          const allowed = await spendCredit(current.id);
+          if (allowed) refreshMe();
+          else setView("paywall");
+          return allowed;
+        }}
         onUpdate={(updater) =>
           setState((s) => ({
             ...s,
@@ -138,13 +171,23 @@ export default function App() {
     );
   }
 
+  if (view === "signin") {
+    return <SignIn reason={signInReason} onExit={() => setView("home")} />;
+  }
+
   if (view === "paywall") {
     return (
       <Paywall
         used={creditsUsed}
         total={FREE_CREDITS}
-        onUnlock={() => {
-          setState((s) => ({ ...s, plan: "pro" }));
+        signedIn={!!me?.signedIn}
+        billingReady={!!me?.features.billing}
+        onSignIn={() => {
+          setSignInReason("subscribe");
+          setView("signin");
+        }}
+        onRedeemed={() => {
+          refreshMe();
           setView("home");
         }}
         onExit={() => setView("home")}
@@ -185,6 +228,12 @@ export default function App() {
       onNewProject={startProject}
       onOpenProject={openProject}
       isPro={isPro}
+      email={me?.email}
+      accountsReady={!!me?.features.accounts}
+      onSignIn={() => {
+        setSignInReason("restore");
+        setView("signin");
+      }}
       creditsLeft={creditsLeft}
       canStartNew={canStartNew}
       onUpgrade={() => setView("paywall")}

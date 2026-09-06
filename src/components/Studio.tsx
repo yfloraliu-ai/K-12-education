@@ -29,6 +29,8 @@ interface Props {
   /** False when a free writer has spent all their credits. */
   canFinish: boolean;
   onNeedsUpgrade: () => void;
+  /** Spends the free credit server-side; false means it was refused. */
+  onFinish: () => Promise<boolean>;
   onUpdate: (updater: (p: Project) => Project) => void;
   onExit: () => void;
   onNewPiece: () => void;
@@ -61,6 +63,7 @@ export default function Studio({
   studentName,
   canFinish,
   onNeedsUpgrade,
+  onFinish,
   onUpdate,
   onExit,
   onNewPiece,
@@ -98,6 +101,7 @@ export default function Studio({
           messages: outgoing,
           action,
           checklist: checklist.map((c) => c.text),
+          piece: p.id,
         });
         onUpdate((prev) => ({
           ...prev,
@@ -154,6 +158,7 @@ export default function Studio({
         studentName,
         draft: p.draft,
         checklist: checklistForGrade(GENRES.find((g) => g.id === p.genre)!, p.grade).map((c) => c.text),
+        piece: p.id,
       });
       onUpdate((prev) => ({ ...prev, reportCard: { draft: p.draft, card }, updatedAt: Date.now() }));
     } catch (e) {
@@ -325,12 +330,16 @@ export default function Studio({
                   className="w-full rounded-lg border-2 border-line focus:border-ink focus:outline-none px-4 py-3 text-[16px] leading-loose resize-y"
                 />
                 <button
-                  onClick={() => {
-                    if (project.stage === "polish" && !canFinish) {
+                  onClick={async () => {
+                    if (project.stage === "draft") {
+                      setStage("polish");
+                      return;
+                    }
+                    if (!canFinish) {
                       onNeedsUpgrade();
                       return;
                     }
-                    setStage(project.stage === "draft" ? "polish" : "shine");
+                    if (await onFinish()) setStage("shine");
                   }}
                   disabled={!project.draft.trim()}
                   className="w-full bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold text-[15px] rounded-full py-3.5 transition flex items-center justify-center gap-2"

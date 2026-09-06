@@ -1,5 +1,27 @@
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { dbConfigured } from "./lib/db.js";
+import {
+  createLoginLink,
+  currentAccount,
+  emailConfigured,
+  endSession,
+  isSubscriptionActive,
+  listChildren,
+  normalizeEmail,
+  redeemLoginToken,
+  sendLoginEmail,
+  startSession,
+} from "./lib/auth.js";
+import {
+  billingConfigured,
+  createCheckoutSession,
+  createPortalSession,
+  getStripe,
+  linkCheckout,
+  syncSubscription,
+} from "./lib/billing.js";
+import { FREE_CREDITS, creditState, mayUseAi, spendCredit } from "./lib/credits.js";
 
 /**
  * Maple Writing Coach — server.
@@ -62,6 +84,9 @@ interface CoachRequest {
   action: CoachAction;
   /** The genre+grade checklist shown in the app — the shared rubric. */
   checklist?: string[];
+  /** Anonymous device id and piece id, for free-tier metering. */
+  device?: string;
+  piece?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +376,56 @@ ${req.draft?.trim() ? `"""\n${req.draft.trim()}\n"""` : "(nothing written yet)"}
 // ---------------------------------------------------------------------------
 
 const app = express();
+
+function appUrl(req: express.Request): string {
+  return (
+    process.env.APP_URL?.replace(/\/$/, "") ||
+    `${req.protocol}://${req.get("host") ?? "localhost:3000"}`
+  );
+}
+
+// Stripe signs the raw body, so this route must see it before JSON parsing.
+app.post(
+  "/api/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const secret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!secret) {
+      res.status(503).json({ error: "Webhooks are not configured." });
+      return;
+    }
+    let event;
+    try {
+      event = getStripe().webhooks.constructEvent(
+        req.body as Buffer,
+        req.headers["stripe-signature"] as string,
+        secret
+      );
+    } catch (error) {
+      console.error("Stripe signature check failed:", error);
+      res.status(400).json({ error: "Bad signature." });
+      return;
+    }
+    try {
+      switch (event.type) {
+        case "checkout.session.completed":
+          await linkCheckout(event.data.object);
+          break;
+        case "customer.subscription.created":
+        case "customer.subscription.updated":
+        case "customer.subscription.deleted":
+          await syncSubscription(event.data.object);
+          break;
+      }
+      res.json({ received: true });
+    } catch (error) {
+      // 500 tells Stripe to retry, which is what we want for a transient fault.
+      console.error(`Stripe webhook ${event.type} failed:`, error);
+      res.status(500).json({ error: "Webhook handling failed." });
+    }
+  }
+);
+
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", async (req, res) => {
@@ -383,6 +458,206 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
+
+// ---------------------------------------------------------------------------
+// Accounts, children, billing
+// ---------------------------------------------------------------------------
+
+/** What the browser needs to render the right plan and profiles. */
+app.get("/api/me", async (req, res) => {
+  const features = {
+    accounts: dbConfigured() && emailConfigured(),
+    billing: dbConfigured() && billingConfigured(),
+    // Whether the server counts free pieces. When false the browser keeps its
+    // own tally, which is how the app behaved before accounts existed.
+    metered: dbConfigured(),
+  };
+  const account = await currentAccount(req);
+  if (!account) {
+    const state = await creditState(req.query.device);
+    res.json({
+      features,
+      signedIn: false,
+      pro: false,
+      creditsUsed: state.used,
+      creditsLeft: state.left,
+      freeCredits: FREE_CREDITS,
+    });
+    return;
+  }
+  const pro = isSubscriptionActive(account);
+  const state = pro ? { used: 0, left: FREE_CREDITS } : await creditState(req.query.device);
+  res.json({
+    features,
+    signedIn: true,
+    email: account.email,
+    pro,
+    planStatus: account.plan_status,
+    periodEnd: account.period_end,
+    hasBillingAccount: !!account.stripe_customer,
+    children: await listChildren(account.id),
+    creditsUsed: state.used,
+    creditsLeft: pro ? null : state.left,
+    freeCredits: FREE_CREDITS,
+  });
+});
+
+app.post("/api/auth/request-link", async (req, res) => {
+  if (!dbConfigured() || !emailConfigured()) {
+    res.status(503).json({ error: "Accounts aren't switched on yet." });
+    return;
+  }
+  const email = normalizeEmail(req.body?.email);
+  if (!email) {
+    res.status(400).json({ error: "That doesn't look like an email address." });
+    return;
+  }
+  try {
+    const link = await createLoginLink(email, appUrl(req));
+    await sendLoginEmail(email, link);
+    res.json({ sent: true });
+  } catch (error) {
+    console.error("/api/auth/request-link failed:", error);
+    res.status(502).json({ error: "We couldn't send that email. Please try again." });
+  }
+});
+
+app.get("/api/auth/verify", async (req, res) => {
+  const token = String(req.query.token ?? "");
+  if (!token) {
+    res.redirect("/?signin=invalid");
+    return;
+  }
+  try {
+    const account = await redeemLoginToken(token);
+    if (!account) {
+      res.redirect("/?signin=expired");
+      return;
+    }
+    await startSession(res, account.id);
+    res.redirect("/?signin=ok");
+  } catch (error) {
+    console.error("/api/auth/verify failed:", error);
+    res.redirect("/?signin=error");
+  }
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  await endSession(req, res);
+  res.json({ ok: true });
+});
+
+app.post("/api/children", async (req, res) => {
+  const account = await currentAccount(req);
+  if (!account) {
+    res.status(401).json({ error: "Please sign in first." });
+    return;
+  }
+  const name = String(req.body?.name ?? "").trim().slice(0, 60);
+  const grade = Number(req.body?.grade);
+  if (!name || ![1, 2, 3, 4, 5, 6].includes(grade)) {
+    res.status(400).json({ error: "A name and a grade from 1 to 6 are needed." });
+    return;
+  }
+  const existing = await listChildren(account.id);
+  if (existing.length >= 8) {
+    res.status(400).json({ error: "That's as many writers as one account holds." });
+    return;
+  }
+  const { newId, query } = await import("./lib/db.js");
+  await query(`INSERT INTO children (id, account_id, name, grade) VALUES ($1, $2, $3, $4)`, [
+    newId("kid"),
+    account.id,
+    name,
+    grade,
+  ]);
+  res.json({ children: await listChildren(account.id) });
+});
+
+app.delete("/api/children/:id", async (req, res) => {
+  const account = await currentAccount(req);
+  if (!account) {
+    res.status(401).json({ error: "Please sign in first." });
+    return;
+  }
+  const { query } = await import("./lib/db.js");
+  await query(`DELETE FROM children WHERE id = $1 AND account_id = $2`, [req.params.id, account.id]);
+  res.json({ children: await listChildren(account.id) });
+});
+
+app.post("/api/billing/checkout", async (req, res) => {
+  const account = await currentAccount(req);
+  if (!account) {
+    res.status(401).json({ error: "Please sign in before subscribing." });
+    return;
+  }
+  if (!billingConfigured()) {
+    res.status(503).json({ error: "Checkout isn't switched on yet." });
+    return;
+  }
+  try {
+    const url = await createCheckoutSession(account, String(req.body?.cycle ?? "monthly"), appUrl(req));
+    res.json({ url });
+  } catch (error) {
+    console.error("/api/billing/checkout failed:", error);
+    res.status(502).json({ error: "We couldn't start checkout. Please try again." });
+  }
+});
+
+/** Redeem a comp code (PRO_UNLOCK_CODES) — beta testers, teachers, goodwill. */
+app.post("/api/billing/redeem", async (req, res) => {
+  const account = await currentAccount(req);
+  if (!account) {
+    res.status(401).json({ error: "Please sign in first." });
+    return;
+  }
+  const codes = (process.env.PRO_UNLOCK_CODES ?? "")
+    .split(",")
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean);
+  const given = String(req.body?.code ?? "").trim().toUpperCase();
+  if (!given || !codes.includes(given)) {
+    res.status(400).json({ error: "That code didn't work." });
+    return;
+  }
+  const { query } = await import("./lib/db.js");
+  await query(
+    `UPDATE accounts SET plan = 'pro', plan_status = 'comp', period_end = NULL WHERE id = $1`,
+    [account.id]
+  );
+  res.json({ ok: true });
+});
+
+app.post("/api/billing/portal", async (req, res) => {
+  const account = await currentAccount(req);
+  if (!account) {
+    res.status(401).json({ error: "Please sign in first." });
+    return;
+  }
+  try {
+    res.json({ url: await createPortalSession(account, appUrl(req)) });
+  } catch (error) {
+    console.error("/api/billing/portal failed:", error);
+    res.status(502).json({ error: "We couldn't open the billing page." });
+  }
+});
+
+/** Called once when a piece is finished, so a free credit is spent server-side. */
+app.post("/api/credits/spend", async (req, res) => {
+  const account = await currentAccount(req);
+  if (isSubscriptionActive(account)) {
+    res.json({ pro: true, allowed: true, creditsLeft: null });
+    return;
+  }
+  const state = await spendCredit(req.body?.device, req.body?.piece);
+  res.json({
+    pro: false,
+    allowed: state.allowed,
+    creditsUsed: state.used,
+    creditsLeft: state.left,
+  });
+});
+
 const VALID_GRADES = [1, 2, 3, 4, 5, 6];
 const VALID_GENRES = Object.keys(GENRE_LABEL);
 const VALID_STAGES = Object.keys(STAGE_GUIDE);
@@ -398,6 +673,12 @@ app.post("/api/coach", async (req, res) => {
       !VALID_ACTIONS.includes(String(body.action ?? "chat"))
     ) {
       res.status(400).json({ error: "Invalid coach request." });
+      return;
+    }
+
+    const account = await currentAccount(req);
+    if (!(await mayUseAi(isSubscriptionActive(account), body.device, body.piece))) {
+      res.status(402).json({ error: "Your free pieces are used up. Subscribe to keep writing." });
       return;
     }
 
@@ -482,6 +763,8 @@ interface ReportCardRequest {
   studentName?: string;
   draft: string;
   checklist: string[];
+  device?: string;
+  piece?: string;
 }
 
 function buildReportCardPrompt(req: ReportCardRequest): string {
@@ -612,6 +895,12 @@ app.post("/api/report-card", async (req, res) => {
       res.status(400).json({ error: "Invalid report card request." });
       return;
     }
+    const account = await currentAccount(req);
+    if (!(await mayUseAi(isSubscriptionActive(account), body.device, body.piece))) {
+      res.status(402).json({ error: "Your free pieces are used up. Subscribe to keep writing." });
+      return;
+    }
+
     const rcReq: ReportCardRequest = {
       grade: Number(body.grade) as Grade,
       genre: body.genre as GenreId,

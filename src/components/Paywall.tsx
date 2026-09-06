@@ -1,11 +1,16 @@
 import { useState } from "react";
-import { ArrowLeftIcon, CheckIcon, LeafIcon, SparkleIcon } from "./icons";
+import { redeemCode, startCheckout } from "../services/account";
+import { ArrowLeftIcon, CheckIcon, LeafIcon } from "./icons";
 
 interface Props {
   /** How many free pieces the writer has finished. */
   used: number;
   total: number;
-  onUnlock: () => void;
+  /** Checkout needs an account first; false sends them to sign-in. */
+  signedIn: boolean;
+  billingReady: boolean;
+  onSignIn: () => void;
+  onRedeemed: () => void;
   onExit: () => void;
 }
 
@@ -18,17 +23,43 @@ const PERKS = [
   "All six genres and the Skill Gym",
 ];
 
-export default function Paywall({ used, total, onUnlock, onExit }: Props) {
+export default function Paywall({
+  used,
+  total,
+  signedIn,
+  billingReady,
+  onSignIn,
+  onRedeemed,
+  onExit,
+}: Props) {
+  const [busy, setBusy] = useState<"monthly" | "yearly" | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState("");
-  const [error, setError] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
 
-  const redeem = () => {
-    // Testing unlock until real payments are wired up.
-    if (code.trim().toUpperCase() === "MAPLE-PRO") {
-      onUnlock();
+  const redeem = async () => {
+    setCodeError(null);
+    try {
+      await redeemCode(code.trim());
+      onRedeemed();
+    } catch (err) {
+      setCodeError(err instanceof Error ? err.message : "That code didn't work.");
+    }
+  };
+
+  const subscribe = async (cycle: "monthly" | "yearly") => {
+    if (!signedIn) {
+      onSignIn();
       return;
     }
-    setError(true);
+    setBusy(cycle);
+    setError(null);
+    try {
+      await startCheckout(cycle);   // redirects to Stripe
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Checkout could not start.");
+      setBusy(null);
+    }
   };
 
   return (
@@ -54,7 +85,10 @@ export default function Paywall({ used, total, onUnlock, onExit }: Props) {
       <div className="h-0.5 bg-ink mb-8" />
 
       <div className="grid md:grid-cols-2 gap-4 mb-8">
-        <div className="border-2 border-line rounded-lg p-6">
+        <button
+          onClick={() => subscribe("monthly")}
+          disabled={!!busy || !billingReady}
+          className="border-2 border-line hover:border-ink rounded-lg p-6 text-left transition disabled:opacity-50">
           <div className="text-[11px] font-bold uppercase tracking-widest text-stone-400 mb-2">
             Monthly
           </div>
@@ -62,10 +96,15 @@ export default function Paywall({ used, total, onUnlock, onExit }: Props) {
             <span className="text-4xl font-extrabold tabular-nums">$4.99</span>
             <span className="text-sm font-bold text-stone-400">CAD / month</span>
           </div>
-          <p className="text-[13px] text-stone-500">Cancel any time.</p>
-        </div>
+          <p className="text-[13px] text-stone-500">
+            {busy === "monthly" ? "Opening checkout…" : "Cancel any time."}
+          </p>
+        </button>
 
-        <div className="border-2 border-ink rounded-lg p-6 relative">
+        <button
+          onClick={() => subscribe("yearly")}
+          disabled={!!busy || !billingReady}
+          className="border-2 border-ink rounded-lg p-6 relative text-left hover:bg-soft transition disabled:opacity-50">
           <span className="absolute -top-3 left-5 text-[11px] font-extrabold hl-g px-2 py-0.5 border-2 border-ink rounded-full bg-white">
             SAVE 17%
           </span>
@@ -76,8 +115,10 @@ export default function Paywall({ used, total, onUnlock, onExit }: Props) {
             <span className="text-4xl font-extrabold tabular-nums">$49.99</span>
             <span className="text-sm font-bold text-stone-400">CAD / year</span>
           </div>
-          <p className="text-[13px] text-stone-500">Just $4.17 a month.</p>
-        </div>
+          <p className="text-[13px] text-stone-500">
+            {busy === "yearly" ? "Opening checkout…" : "Just $4.17 a month."}
+          </p>
+        </button>
       </div>
 
       <ul className="space-y-2 mb-8">
@@ -89,44 +130,56 @@ export default function Paywall({ used, total, onUnlock, onExit }: Props) {
         ))}
       </ul>
 
-      <button
-        disabled
-        className="w-full bg-ink text-white font-bold text-lg rounded-full py-4 mb-2 opacity-40 flex items-center justify-center gap-2"
-      >
-        <SparkleIcon size={18} className="text-hy" /> Checkout coming soon
-      </button>
-      <p className="text-[13px] text-stone-400 text-center mb-8">
-        Payments aren't switched on yet — this is the trial build.
-      </p>
+      {!billingReady && (
+        <p className="text-[13px] text-stone-400 text-center mb-6">
+          Checkout isn't switched on yet — this is the trial build.
+        </p>
+      )}
+      {error && (
+        <p className="text-sm font-semibold text-center mb-6">
+          <span className="hl-p px-0.5">Oops:</span> {error}
+        </p>
+      )}
 
-      <div className="border-2 border-line rounded-lg p-5">
-        <label className="block font-bold text-sm mb-2">
-          <span className="hl-b px-1">Have an unlock code?</span>
-        </label>
-        <div className="flex gap-2">
-          <input
-            value={code}
-            onChange={(e) => {
-              setCode(e.target.value);
-              setError(false);
-            }}
-            placeholder="Enter your code"
-            className="flex-1 rounded-full border-2 border-ink px-5 py-2.5 focus:outline-none focus:ring-4 focus:ring-hy"
-          />
-          <button
-            onClick={redeem}
-            disabled={!code.trim()}
-            className="bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold rounded-full px-7 transition"
-          >
-            Unlock
-          </button>
+      {!signedIn && billingReady && (
+        <button
+          onClick={onSignIn}
+          className="w-full border-2 border-ink rounded-full py-3 font-bold hover:bg-hy transition mb-6"
+        >
+          Already subscribed? Sign in
+        </button>
+      )}
+
+      {signedIn && (
+        <div className="border-2 border-line rounded-lg p-5 mb-6">
+          <label className="block font-bold text-sm mb-2">
+            <span className="hl-b px-1">Have an unlock code?</span>
+          </label>
+          <div className="flex gap-2">
+            <input
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+                setCodeError(null);
+              }}
+              placeholder="Enter your code"
+              className="flex-1 rounded-full border-2 border-ink px-5 py-2.5 focus:outline-none focus:ring-4 focus:ring-hy"
+            />
+            <button
+              onClick={redeem}
+              disabled={!code.trim()}
+              className="bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold rounded-full px-7 transition"
+            >
+              Unlock
+            </button>
+          </div>
+          {codeError && (
+            <p className="text-[13px] font-semibold mt-2">
+              <span className="hl-p px-0.5">{codeError}</span>
+            </p>
+          )}
         </div>
-        {error && (
-          <p className="text-[13px] font-semibold mt-2">
-            <span className="hl-p px-0.5">That code didn't work.</span> Check it and try again.
-          </p>
-        )}
-      </div>
+      )}
 
       <p className="text-[13px] text-stone-400 mt-6 text-center">
         You've finished {used} of {total} free pieces. Your writing stays saved either way.

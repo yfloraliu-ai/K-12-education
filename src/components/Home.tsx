@@ -16,6 +16,9 @@ interface Props {
   grade: Grade;
   projects: Project[];
   isPro: boolean;
+  email?: string;
+  accountsReady: boolean;
+  onSignIn: () => void;
   creditsLeft: number;
   canStartNew: boolean;
   onUpgrade: () => void;
@@ -31,6 +34,9 @@ export default function Home({
   grade,
   projects,
   isPro,
+  email,
+  accountsReady,
+  onSignIn,
   creditsLeft,
   canStartNew,
   onUpgrade,
@@ -66,7 +72,27 @@ export default function Home({
         </div>
         <div className="flex items-center gap-2">
           {isPro ? (
-            <span className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm bg-hy">Pro</span>
+            <span
+              title={email}
+              className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm bg-hy"
+            >
+              Pro
+            </span>
+          ) : accountsReady && !email ? (
+            <>
+              <button
+                onClick={onSignIn}
+                className="border-2 border-line hover:border-ink rounded-full px-4 py-2 font-bold text-sm transition"
+              >
+                Sign in
+              </button>
+              <button
+                onClick={onUpgrade}
+                className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm hover:bg-hy transition"
+              >
+                {creditsLeft} free {creditsLeft === 1 ? "piece" : "pieces"} left
+              </button>
+            </>
           ) : (
             <button
               onClick={onUpgrade}
