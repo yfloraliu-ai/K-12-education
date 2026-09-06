@@ -10,7 +10,7 @@ import Anthropic from "@anthropic-ai/sdk";
  * the system prompt pins the model to Socratic, step-by-step coaching.
  */
 
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
 let claudeClient: Anthropic | null = null;
 function getClaude(): Anthropic {
