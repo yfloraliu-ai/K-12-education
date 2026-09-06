@@ -36,6 +36,9 @@ export interface ReportCard {
 /** What the student decided about one sentence's feedback. */
 export type SentenceMark = "revised" | "kept";
 
+/** Free trial or paid. Free writers get FREE_CREDITS finished pieces. */
+export type Plan = "free" | "pro";
+
 export interface Project {
   id: string;
   grade: Grade;
@@ -57,6 +60,8 @@ export interface Project {
     card: ReportCard;
     marks?: Record<number, SentenceMark>;
   } | null;
+  /** Set once the piece is finished and has spent one free credit. */
+  creditCounted?: boolean;
   createdAt: number;
   updatedAt: number;
 }

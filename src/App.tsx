@@ -1,18 +1,23 @@
 import { useEffect, useState } from "react";
-import type { GenreId, Grade, Project } from "./types";
+import type { GenreId, Grade, Plan, Project } from "./types";
 import Welcome from "./components/Welcome";
 import Home from "./components/Home";
 import Studio from "./components/Studio";
 import Lessons from "./components/Lessons";
 import Journal from "./components/Journal";
+import Paywall from "./components/Paywall";
 
 const STORAGE_KEY = "maple-writing-coach-v1";
+
+/** Pieces a free writer may finish before subscribing. */
+export const FREE_CREDITS = 3;
 
 interface PersistedState {
   name: string;
   grade: Grade | null;
   projects: Project[];
   lessonsDone: Record<string, boolean>;
+  plan: Plan;
 }
 
 function loadState(): PersistedState {
@@ -31,15 +36,16 @@ function loadState(): PersistedState {
         grade: [1, 2, 3, 4, 5, 6].includes(parsed.grade) ? parsed.grade : null,
         projects,
         lessonsDone: parsed.lessonsDone ?? {},
+        plan: parsed.plan === "pro" ? "pro" : "free",
       };
     }
   } catch {
     // Corrupt or unavailable storage — start fresh.
   }
-  return { name: "", grade: null, projects: [], lessonsDone: {} };
+  return { name: "", grade: null, projects: [], lessonsDone: {}, plan: "free" };
 }
 
-type View = "home" | "studio" | "lessons" | "journal";
+type View = "home" | "studio" | "lessons" | "journal" | "paywall";
 
 export default function App() {
   const [state, setState] = useState<PersistedState>(loadState);
@@ -65,7 +71,17 @@ export default function App() {
     );
   }
 
+  const isPro = state.plan === "pro";
+  const creditsUsed = state.projects.filter((p) => p.creditCounted).length;
+  const creditsLeft = Math.max(0, FREE_CREDITS - creditsUsed);
+  // Three topics total on the free plan — a fourth needs a subscription.
+  const canStartNew = isPro || state.projects.length < FREE_CREDITS;
+
   const startProject = (genre: GenreId, topic: string) => {
+    if (!canStartNew) {
+      setView("paywall");
+      return;
+    }
     const project: Project = {
       id: `p-${Date.now()}`,
       grade: state.grade!,
@@ -98,10 +114,19 @@ export default function App() {
         key={current.id}
         project={current}
         studentName={state.name}
+        canFinish={isPro || !!current.creditCounted || creditsLeft > 0}
+        onNeedsUpgrade={() => setView("paywall")}
         onUpdate={(updater) =>
           setState((s) => ({
             ...s,
-            projects: s.projects.map((p) => (p.id === current.id ? updater(p) : p)),
+            projects: s.projects.map((p) => {
+              if (p.id !== current.id) return p;
+              const next = updater(p);
+              // Finishing a piece spends one free credit, once.
+              return next.stage === "shine" && !next.creditCounted
+                ? { ...next, creditCounted: true }
+                : next;
+            }),
           }))
         }
         onExit={() => setView("home")}
@@ -109,6 +134,20 @@ export default function App() {
           setCurrentId(null);
           setView("home");
         }}
+      />
+    );
+  }
+
+  if (view === "paywall") {
+    return (
+      <Paywall
+        used={creditsUsed}
+        total={FREE_CREDITS}
+        onUnlock={() => {
+          setState((s) => ({ ...s, plan: "pro" }));
+          setView("home");
+        }}
+        onExit={() => setView("home")}
       />
     );
   }
@@ -145,6 +184,10 @@ export default function App() {
       projects={state.projects}
       onNewProject={startProject}
       onOpenProject={openProject}
+      isPro={isPro}
+      creditsLeft={creditsLeft}
+      canStartNew={canStartNew}
+      onUpgrade={() => setView("paywall")}
       onJournal={() => setView("journal")}
       onLessons={() => setView("lessons")}
       onChangeGrade={() => setState((s) => ({ ...s, grade: null }))}

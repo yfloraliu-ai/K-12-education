@@ -15,6 +15,10 @@ interface Props {
   name: string;
   grade: Grade;
   projects: Project[];
+  isPro: boolean;
+  creditsLeft: number;
+  canStartNew: boolean;
+  onUpgrade: () => void;
   onNewProject: (genre: GenreId, topic: string) => void;
   onOpenProject: (id: string) => void;
   onJournal: () => void;
@@ -26,6 +30,10 @@ export default function Home({
   name,
   grade,
   projects,
+  isPro,
+  creditsLeft,
+  canStartNew,
+  onUpgrade,
   onNewProject,
   onOpenProject,
   onJournal,
@@ -56,12 +64,24 @@ export default function Home({
             {name && <span className="hl-y px-1">{name}</span>}!
           </h1>
         </div>
-        <button
-          onClick={onChangeGrade}
-          className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm hover:bg-soft transition"
-        >
-          Grade {grade}
-        </button>
+        <div className="flex items-center gap-2">
+          {isPro ? (
+            <span className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm bg-hy">Pro</span>
+          ) : (
+            <button
+              onClick={onUpgrade}
+              className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm hover:bg-hy transition"
+            >
+              {creditsLeft} free {creditsLeft === 1 ? "piece" : "pieces"} left
+            </button>
+          )}
+          <button
+            onClick={onChangeGrade}
+            className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm hover:bg-soft transition"
+          >
+            Grade {grade}
+          </button>
+        </div>
       </header>
       <p className="text-stone-500 text-lg mb-8">What are we writing today?</p>
       <div className="h-0.5 bg-ink mb-8" />
@@ -96,6 +116,23 @@ export default function Home({
             </div>
           )}
 
+          {!isPro && !canStartNew && (
+            <button
+              onClick={onUpgrade}
+              className="w-full border-2 border-ink rounded-lg p-5 mb-6 text-left hover:bg-hy transition flex items-center justify-between gap-4"
+            >
+              <div>
+                <div className="font-extrabold text-lg">
+                  <span className="hl-y px-1">You've used your 3 free pieces</span>
+                </div>
+                <div className="text-sm text-stone-500 mt-0.5">
+                  Go Pro to keep writing — your journal stays saved either way.
+                </div>
+              </div>
+              <ArrowRightIcon size={22} className="shrink-0" />
+            </button>
+          )}
+
           <h2 className="font-extrabold text-xl mb-4">
             <span className="hl-g px-1">Start something new</span>
           </h2>
@@ -104,6 +141,10 @@ export default function Home({
               <button
                 key={g.id}
                 onClick={() => {
+                  if (!canStartNew) {
+                    onUpgrade();
+                    return;
+                  }
                   setPicking(g);
                   setCustomTopic("");
                   setActiveCat(topicCategoriesFor(g.id, grade)[0]?.id ?? "");

@@ -26,6 +26,9 @@ import {
 interface Props {
   project: Project;
   studentName: string;
+  /** False when a free writer has spent all their credits. */
+  canFinish: boolean;
+  onNeedsUpgrade: () => void;
   onUpdate: (updater: (p: Project) => Project) => void;
   onExit: () => void;
   onNewPiece: () => void;
@@ -53,7 +56,15 @@ const POLISH_TOOLS: {
 
 const FLUORO = [MARKERS.y, MARKERS.p, MARKERS.g, MARKERS.b];
 
-export default function Studio({ project, studentName, onUpdate, onExit, onNewPiece }: Props) {
+export default function Studio({
+  project,
+  studentName,
+  canFinish,
+  onNeedsUpgrade,
+  onUpdate,
+  onExit,
+  onNewPiece,
+}: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const genre = GENRES.find((g) => g.id === project.genre)!;
@@ -314,7 +325,13 @@ export default function Studio({ project, studentName, onUpdate, onExit, onNewPi
                   className="w-full rounded-lg border-2 border-line focus:border-ink focus:outline-none px-4 py-3 text-[16px] leading-loose resize-y"
                 />
                 <button
-                  onClick={() => setStage(project.stage === "draft" ? "polish" : "shine")}
+                  onClick={() => {
+                    if (project.stage === "polish" && !canFinish) {
+                      onNeedsUpgrade();
+                      return;
+                    }
+                    setStage(project.stage === "draft" ? "polish" : "shine");
+                  }}
                   disabled={!project.draft.trim()}
                   className="w-full bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold text-[15px] rounded-full py-3.5 transition flex items-center justify-center gap-2"
                 >
