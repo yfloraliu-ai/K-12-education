@@ -804,7 +804,9 @@ matching exactly this shape:
 
 ## Sentence-by-sentence rules
 - Split the draft into its sentences, in order. EVERY sentence gets an entry
-  with its exact "text".
+  with its exact "text" — copied character for character from the draft, so the
+  app can match it. If the piece runs longer than 25 sentences, cover the first
+  25 and stop.
 - At most 2 comments per sentence — only the most valuable. A strong sentence
   gets one "praise" comment naming exactly what works.
 - "grammar" comments (also use for spelling/punctuation): NAME the error type,
@@ -845,6 +847,61 @@ valuable next step as a writer. Address the student${
 ${req.draft.trim()}
 """`;
 }
+
+/** The shape the model must return. Enforced by the API, not by hope. */
+const REPORT_CARD_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["rubric", "sentences", "overall"],
+  properties: {
+    rubric: {
+      type: "array",
+      minItems: 5,
+      maxItems: 5,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["dimension", "level", "comment"],
+        properties: {
+          dimension: {
+            type: "string",
+            enum: ["Content", "Organization", "Sentence Structure", "Vocabulary", "Conventions"],
+          },
+          level: { type: "integer", minimum: 1, maximum: 4 },
+          comment: { type: "string" },
+        },
+      },
+    },
+    sentences: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["text", "comments"],
+        properties: {
+          text: { type: "string" },
+          comments: {
+            type: "array",
+            maxItems: 2,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "note"],
+              properties: {
+                kind: {
+                  type: "string",
+                  enum: ["praise", "grammar", "structure", "vocabulary", "content"],
+                },
+                note: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+    overall: { type: "string" },
+  },
+} as const;
 
 interface RubricRow {
   dimension: string;
@@ -912,21 +969,38 @@ app.post("/api/report-card", async (req, res) => {
         : [],
     };
 
-    const response = await getClaude().messages.create({
+    // Streamed so a long report can't trip an HTTP timeout, at low effort so
+    // it finishes well inside the hosting platform's function limit, and shaped
+    // by a schema so the reply is always parseable.
+    const started = Date.now();
+    const stream = getClaude().messages.stream({
       model: CLAUDE_MODEL,
-      max_tokens: 4000,
+      max_tokens: 3000,
+      output_config: {
+        effort: "low",
+        format: { type: "json_schema", schema: REPORT_CARD_SCHEMA as unknown as Record<string, unknown> },
+      },
       system: buildReportCardPrompt(rcReq),
-      messages: [{ role: "user", content: "[Generate the report card JSON now.]" }],
+      messages: [{ role: "user", content: "Write the report card now." }],
     });
+    const response = await stream.finalMessage();
     const raw = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === "text")
       .map((block) => block.text)
       .join("\n");
+    console.log(
+      `/api/report-card ${Date.now() - started}ms, ${response.usage.output_tokens} out, stop=${response.stop_reason}`
+    );
 
     const card = parseReportCard(raw);
     if (!card) {
       console.error("/api/report-card unparseable output:", raw.slice(0, 400));
-      res.status(502).json({ error: "The report card came back garbled — please try again." });
+      res.status(502).json({
+        error:
+          response.stop_reason === "max_tokens"
+            ? "That piece was too long for one report card. Try shortening it a little."
+            : "The report card came back garbled — please try again.",
+      });
       return;
     }
     res.json(card);
