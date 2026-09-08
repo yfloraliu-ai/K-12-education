@@ -849,6 +849,12 @@ ${req.draft.trim()}
 }
 
 /** The shape the model must return. Enforced by the API, not by hope. */
+/**
+ * Only the keywords the structured-output subset accepts: type, properties,
+ * required, additionalProperties and enum. Numeric bounds (minItems, maxItems,
+ * minimum, maximum) are rejected by the API, so the counts and the 1–4 range
+ * are enforced by the prompt and clamped by parseReportCard instead.
+ */
 const REPORT_CARD_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -856,8 +862,6 @@ const REPORT_CARD_SCHEMA = {
   properties: {
     rubric: {
       type: "array",
-      minItems: 5,
-      maxItems: 5,
       items: {
         type: "object",
         additionalProperties: false,
@@ -867,7 +871,7 @@ const REPORT_CARD_SCHEMA = {
             type: "string",
             enum: ["Content", "Organization", "Sentence Structure", "Vocabulary", "Conventions"],
           },
-          level: { type: "integer", minimum: 1, maximum: 4 },
+          level: { type: "integer" },
           comment: { type: "string" },
         },
       },
@@ -882,7 +886,6 @@ const REPORT_CARD_SCHEMA = {
           text: { type: "string" },
           comments: {
             type: "array",
-            maxItems: 2,
             items: {
               type: "object",
               additionalProperties: false,
@@ -925,7 +928,7 @@ function parseReportCard(raw: string): { rubric: RubricRow[]; sentences: Sentenc
       level: Math.min(4, Math.max(1, Math.round(Number(r.level) || 1))),
       comment: String(r.comment ?? "").slice(0, 600),
     }));
-    if (rubric.length !== 5) return null;
+    if (!rubric.length) return null;
     const sentences: SentenceNote[] = data.sentences.slice(0, 80).map((s: Record<string, unknown>) => ({
       text: String(s.text ?? "").slice(0, 600),
       comments: (Array.isArray(s.comments) ? s.comments : [])
@@ -973,17 +976,37 @@ app.post("/api/report-card", async (req, res) => {
     // it finishes well inside the hosting platform's function limit, and shaped
     // by a schema so the reply is always parseable.
     const started = Date.now();
-    const stream = getClaude().messages.stream({
-      model: CLAUDE_MODEL,
-      max_tokens: 3000,
-      output_config: {
-        effort: "low",
-        format: { type: "json_schema", schema: REPORT_CARD_SCHEMA as unknown as Record<string, unknown> },
-      },
-      system: buildReportCardPrompt(rcReq),
-      messages: [{ role: "user", content: "Write the report card now." }],
-    });
-    const response = await stream.finalMessage();
+    const system = buildReportCardPrompt(rcReq);
+    const messages = [{ role: "user" as const, content: "Write the report card now." }];
+    const base = { model: CLAUDE_MODEL, max_tokens: 3000, system, messages };
+
+    // The schema guarantees a parseable reply, but the structured-output subset
+    // is narrower than JSON Schema. If the API ever rejects the schema, fall
+    // back to plain generation rather than failing the child's report card.
+    let response;
+    try {
+      response = await getClaude()
+        .messages.stream({
+          ...base,
+          output_config: {
+            effort: "low",
+            format: {
+              type: "json_schema",
+              schema: REPORT_CARD_SCHEMA as unknown as Record<string, unknown>,
+            },
+          },
+        })
+        .finalMessage();
+    } catch (error) {
+      const schemaRejected =
+        error instanceof Anthropic.BadRequestError &&
+        /output_config|schema/i.test(error.message);
+      if (!schemaRejected) throw error;
+      console.warn("/api/report-card schema rejected, retrying without it:", error.message);
+      response = await getClaude()
+        .messages.stream({ ...base, output_config: { effort: "low" } })
+        .finalMessage();
+    }
     const raw = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === "text")
       .map((block) => block.text)
