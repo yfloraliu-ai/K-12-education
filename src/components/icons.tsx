@@ -54,6 +54,15 @@ export const CheckIcon = (p: IconProps) => (
 export const XIcon = (p: IconProps) => (
   <Svg {...p}><path d="M6 6l12 12" /><path d="M18 6L6 18" /></Svg>
 );
+export const ChevronDownIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M6 9l6 6 6-6" /></Svg>
+);
+export const TrendUpIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M12 19V5" /><path d="M6 11l6-6 6 6" /></Svg>
+);
+export const TrendDownIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M12 5v14" /><path d="M6 13l6 6 6-6" /></Svg>
+);
 export const StarIcon = (p: IconProps & { filled?: boolean }) => (
   <svg
     width={p.size ?? 18}

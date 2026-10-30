@@ -101,6 +101,7 @@ export default function Journal({ projects, starsEarned, onOpen, onDelete, onExi
           {sorted.map((p) => {
             const chip = STAGE_CHIP[p.stage];
             const words = countWords(p.draft);
+            const latestScore = p.scores?.[p.scores.length - 1];
             const genreName = GENRES.find((g) => g.id === p.genre)?.name ?? p.genre;
             return (
               <li
@@ -114,6 +115,12 @@ export default function Journal({ projects, starsEarned, onOpen, onDelete, onExi
                     <span className="block text-xs text-stone-500 mt-0.5">
                       {genreName} · Grade {p.grade} · {words} {words === 1 ? "word" : "words"} ·{" "}
                       {formatDate(p.updatedAt)}
+                      {latestScore && (
+                        <>
+                          {" · "}
+                          <span className="font-extrabold tabular-nums text-ink">{latestScore.points}/100</span>
+                        </>
+                      )}
                     </span>
                   </span>
                 </button>

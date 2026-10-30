@@ -7,6 +7,8 @@ import CoachChat from "./CoachChat";
 import Checklist from "./Checklist";
 import ReportCard from "./ReportCard";
 import AnnotatedDraft from "./AnnotatedDraft";
+import ScoreBadge from "./ScoreBadge";
+import { baseScore, computeScore, SCORE_HISTORY_MAX } from "../lib/score";
 import {
   ArrowRightIcon,
   CopyIcon,
@@ -143,6 +145,11 @@ export default function Studio({
   const reportRequested = useRef<string | null>(null);
   /** The card only counts while it still describes the current draft. */
   const card = project.reportCard?.draft === project.draft ? project.reportCard.card : null;
+  // The badge keeps showing the last score even once the draft has moved on —
+  // a number that vanishes mid-edit teaches nothing — but flags it as stale.
+  const marks = project.reportCard?.marks ?? {};
+  const score = computeScore(project.reportCard?.card, marks);
+  const scoreStale = !!project.reportCard && project.reportCard.draft !== project.draft;
 
   const loadReportCard = useCallback(async () => {
     const p = projectRef.current;
@@ -160,7 +167,14 @@ export default function Studio({
         checklist: checklistForGrade(GENRES.find((g) => g.id === p.genre)!, p.grade).map((c) => c.text),
         piece: p.id,
       });
-      onUpdate((prev) => ({ ...prev, reportCard: { draft: p.draft, card }, updatedAt: Date.now() }));
+      onUpdate((prev) => {
+        const points = baseScore(card);
+        const scores =
+          points === null
+            ? prev.scores
+            : [...(prev.scores ?? []), { at: Date.now(), points }].slice(-SCORE_HISTORY_MAX);
+        return { ...prev, reportCard: { draft: p.draft, card }, scores, updatedAt: Date.now() };
+      });
     } catch (e) {
       reportRequested.current = null;
       setReportError(e instanceof Error ? e.message : "Something went wrong.");
@@ -188,8 +202,9 @@ export default function Studio({
 
   return (
     <div className="min-h-screen p-3 md:p-6 max-w-6xl mx-auto flex flex-col bg-white">
-      {/* Header */}
-      <header className="flex items-end gap-4 mb-3 flex-wrap">
+      {/* Header — sticky so the score stays in the corner while the page scrolls */}
+      <div className="sticky top-0 z-30 bg-white -mt-3 md:-mt-6 pt-3 md:pt-6">
+      <header className="flex items-end gap-3 md:gap-4 mb-3 flex-wrap">
         <button
           onClick={onExit}
           aria-label="Home"
@@ -228,8 +243,16 @@ export default function Studio({
             );
           })}
         </nav>
+        <ScoreBadge
+          score={score}
+          stale={scoreStale}
+          history={project.scores ?? []}
+          loading={reportLoading}
+          onRecheck={loadReportCard}
+        />
       </header>
       <div className="h-0.5 bg-ink mb-4" />
+      </div>
 
       <div className="grid lg:grid-cols-[1fr_400px] gap-4 flex-1 min-h-0">
         {/* Left: stage workspace */}

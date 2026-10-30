@@ -36,6 +36,12 @@ export interface ReportCard {
 /** What the student decided about one sentence's feedback. */
 export type SentenceMark = "revised" | "kept";
 
+/** A score out of 100 recorded the moment a report card was written. */
+export interface ScoreEntry {
+  at: number;
+  points: number;
+}
+
 /** Free trial or paid. Free writers get FREE_CREDITS finished pieces. */
 export type Plan = "free" | "pro";
 
@@ -60,6 +66,11 @@ export interface Project {
     card: ReportCard;
     marks?: Record<number, SentenceMark>;
   } | null;
+  /**
+   * One entry per graded report card, oldest first, so the writer can see the
+   * number move between submissions. Capped by SCORE_HISTORY_MAX.
+   */
+  scores?: ScoreEntry[];
   /** Set once the piece is finished and has spent one free credit. */
   creditCounted?: boolean;
   createdAt: number;
