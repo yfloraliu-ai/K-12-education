@@ -65,6 +65,13 @@ export interface Project {
     draft: string;
     card: ReportCard;
     marks?: Record<number, SentenceMark>;
+    /**
+     * The sentence exactly as the coach graded it, kept by index the first
+     * time the student rewrites it, so the finished piece can show the two
+     * versions side by side. Rewriting again keeps the first try, not the
+     * one in between.
+     */
+    originals?: Record<number, string>;
   } | null;
   /**
    * One entry per graded report card, oldest first, so the writer can see the

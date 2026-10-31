@@ -5,6 +5,8 @@ interface Props {
   card: ReportCardData | null;
   /** What the student decided about each sentence, up in the piece itself. */
   marks: Record<number, SentenceMark>;
+  /** Each rewritten sentence as the coach first graded it, by index. */
+  originals: Record<number, string>;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
@@ -25,7 +27,7 @@ const KINDS: Record<CommentKind, { label: string; hl: string }> = {
   content: { label: "Ideas", hl: "hl-b" },
 };
 
-export default function ReportCard({ card, marks, loading, error, onRetry }: Props) {
+export default function ReportCard({ card, marks, originals, loading, error, onRetry }: Props) {
   return (
     <div className="bg-white rounded-lg border-2 border-ink p-5 md:p-6">
       <h2 className="font-extrabold text-xl mb-1">
@@ -100,6 +102,12 @@ export default function ReportCard({ card, marks, loading, error, onRetry }: Pro
             <ol className="space-y-3">
               {card.sentences.map((s, i) => (
                 <li key={i} className="border-l-[3px] border-line pl-4 py-0.5">
+                  {originals[i] !== undefined && (
+                    <p className="text-[13px] leading-relaxed text-stone-400 mb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-widest mr-1.5">First try</span>
+                      “{originals[i]}”
+                    </p>
+                  )}
                   <p className="text-[14.5px] font-semibold leading-relaxed mb-1.5">
                     <span className="text-stone-300 font-extrabold mr-1.5">{i + 1}.</span>
                     “{s.text}”

@@ -404,6 +404,7 @@ export default function Studio({
                     draft={project.draft}
                     card={card}
                     marks={project.reportCard?.marks ?? {}}
+                    originals={project.reportCard?.originals ?? {}}
                     onRevise={(index, start, end, newText) =>
                       onUpdate((p) => {
                         if (!p.reportCard) return p;
@@ -420,7 +421,34 @@ export default function Studio({
                             draft: nextDraft,
                             card: { ...p.reportCard.card, sentences },
                             marks: { ...p.reportCard.marks, [index]: "revised" },
+                            originals: {
+                              ...p.reportCard.originals,
+                              // Only on the first rewrite: "first try" means the
+                              // graded sentence, not the previous attempt.
+                              [index]:
+                                p.reportCard.originals?.[index] ?? p.reportCard.card.sentences[index].text,
+                            },
                           },
+                          updatedAt: Date.now(),
+                        };
+                      })
+                    }
+                    onRevert={(index, start, end) =>
+                      onUpdate((p) => {
+                        const first = p.reportCard?.originals?.[index];
+                        if (!p.reportCard || first === undefined) return p;
+                        const nextDraft = p.draft.slice(0, start) + first + p.draft.slice(end);
+                        const sentences = p.reportCard.card.sentences.map((s, i) =>
+                          i === index ? { ...s, text: first } : s
+                        );
+                        const originals = { ...p.reportCard.originals };
+                        delete originals[index];
+                        const marks = { ...p.reportCard.marks };
+                        delete marks[index];
+                        return {
+                          ...p,
+                          draft: nextDraft,
+                          reportCard: { draft: nextDraft, card: { ...p.reportCard.card, sentences }, marks, originals },
                           updatedAt: Date.now(),
                         };
                       })
@@ -471,6 +499,7 @@ export default function Studio({
               <ReportCard
                 card={card}
                 marks={project.reportCard?.marks ?? {}}
+                originals={project.reportCard?.originals ?? {}}
                 loading={reportLoading}
                 error={reportError}
                 onRetry={loadReportCard}

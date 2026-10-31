@@ -6,8 +6,12 @@ interface Props {
   draft: string;
   card: ReportCard;
   marks: Record<number, SentenceMark>;
+  /** Each rewritten sentence as the coach first graded it, by index. */
+  originals: Record<number, string>;
   /** Replace one sentence in the draft with the student's own rewrite. */
   onRevise: (index: number, start: number, end: number, newText: string) => void;
+  /** Put a rewritten sentence back the way it was. */
+  onRevert: (index: number, start: number, end: number) => void;
   onMark: (index: number, mark: SentenceMark | null) => void;
 }
 
@@ -52,7 +56,7 @@ function buildSegments(draft: string, sentences: { text: string }[]): Segment[] 
   return segments;
 }
 
-export default function AnnotatedDraft({ draft, card, marks, onRevise, onMark }: Props) {
+export default function AnnotatedDraft({ draft, card, marks, originals, onRevise, onRevert, onMark }: Props) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [rewrite, setRewrite] = useState("");
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -157,7 +161,7 @@ export default function AnnotatedDraft({ draft, card, marks, onRevise, onMark }:
         {open && openSegment && pos && (
           <div
             ref={popoverRef}
-            className="absolute z-20 bg-white border-2 border-ink rounded-lg p-4 shadow-[4px_4px_0_rgba(28,25,23,0.12)] pop-in"
+            className="absolute z-20 bg-white border-2 border-ink rounded-lg p-4 shadow-[4px_4px_0_rgba(28,25,23,0.12)] pop-in max-h-[70vh] overflow-y-auto"
             style={{ top: pos.top, left: pos.left, width: Math.min(360, containerRef.current?.clientWidth ?? 360) }}
           >
             <div className="flex items-start justify-between gap-2 mb-2">
@@ -172,6 +176,27 @@ export default function AnnotatedDraft({ draft, card, marks, onRevise, onMark }:
                 <XIcon size={14} />
               </button>
             </div>
+
+            {originals[openSegment.index] !== undefined && (
+              <div className="border-2 border-line rounded-lg overflow-hidden mb-3">
+                <div className="px-3 py-2 border-b-2 border-line bg-soft">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-0.5">
+                    Your first try
+                  </div>
+                  <p className="text-[13.5px] leading-relaxed text-stone-500">
+                    {originals[openSegment.index]}
+                  </p>
+                </div>
+                <div className="px-3 py-2">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-0.5">
+                    Your new version
+                  </div>
+                  <p className="text-[13.5px] leading-relaxed font-semibold">
+                    <span className="hl-g px-0.5">{openSegment.text}</span>
+                  </p>
+                </div>
+              </div>
+            )}
 
             <ul className="space-y-2 mb-3">
               {open.comments.length === 0 ? (
@@ -192,7 +217,7 @@ export default function AnnotatedDraft({ draft, card, marks, onRevise, onMark }:
             </ul>
 
             <label className="block text-[11px] font-bold uppercase tracking-widest text-stone-400 mb-1.5">
-              Your fix — you write it
+              {originals[openSegment.index] !== undefined ? "Change it again" : "Your fix — you write it"}
             </label>
             <textarea
               value={rewrite}
@@ -214,12 +239,20 @@ export default function AnnotatedDraft({ draft, card, marks, onRevise, onMark }:
               </button>
               <button
                 onClick={() => {
-                  onMark(openSegment.index, marks[openSegment.index] === "kept" ? null : "kept");
+                  if (originals[openSegment.index] !== undefined) {
+                    onRevert(openSegment.index, openSegment.start, openSegment.end);
+                  } else {
+                    onMark(openSegment.index, marks[openSegment.index] === "kept" ? null : "kept");
+                  }
                   setOpenIndex(null);
                 }}
-                className="border-2 border-ink rounded-full px-4 py-2 font-bold text-[13px] hover:bg-hy transition"
+                className="border-2 border-ink rounded-full px-4 py-2 font-bold text-[13px] hover:bg-hy transition whitespace-nowrap"
               >
-                {marks[openSegment.index] === "kept" ? "Undo" : "Keep it"}
+                {originals[openSegment.index] !== undefined
+                  ? "Undo my fix"
+                  : marks[openSegment.index] === "kept"
+                    ? "Undo"
+                    : "Keep it"}
               </button>
             </div>
           </div>
