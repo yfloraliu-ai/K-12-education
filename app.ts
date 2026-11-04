@@ -24,6 +24,7 @@ import {
 } from "./lib/billing.js";
 import { FREE_CREDITS, creditState, mayUseAi, spendCredit } from "./lib/credits.js";
 import { clearPass, codeIsValid, hasPass, issuePass, unlockConfigured } from "./lib/unlock.js";
+import { splitSentences } from "./lib/sentences.js";
 
 /**
  * Full access comes from either a live subscription or a redeemed unlock code.
@@ -792,15 +793,44 @@ interface ReportCardRequest {
   piece?: string;
 }
 
-function buildReportCardPrompt(req: ReportCardRequest): string {
+/**
+ * A long piece used to lose its ending. The model was asked to split the draft
+ * AND comment on it in one reply, under a token budget, with a "cover the first
+ * 25 sentences" escape hatch — so past roughly two dozen sentences the feedback
+ * simply stopped, and a sentence the model re-typed inexactly could not be
+ * matched back to the draft at all.
+ *
+ * Now the server splits the draft (lib/sentences.ts) and asks the model only
+ * for comments, keyed by sentence index, in parallel batches. Every sentence
+ * gets an entry, every "text" is verbatim, and length costs wall-clock rather
+ * than coverage.
+ */
+
+/** Sentences per model call — small enough that a batch never runs out of room. */
+const COMMENT_BATCH = 15;
+/** Ceiling on one report card. Far beyond any elementary piece. */
+const MAX_SENTENCES = 120;
+
+/** Everything both prompts need to know about the student and the task. */
+function sharedContext(req: ReportCardRequest): string {
   const band = gradeBand(req.grade);
+  return `## How to speak to this student
+${BAND_VOICE[band]}
+
+## What a Grade ${req.grade} writer is expected to do
+${BAND_SKILLS[band]}
+${req.grade === 6 ? `\n${GRADE6_SOCIAL_STUDIES}\n` : ""}
+## The checklist for this piece (the shared rubric)
+${req.checklist.map((c) => `- ${c}`).join("\n") || "(none provided)"}`;
+}
+
+function buildRubricPrompt(req: ReportCardRequest): string {
   return `You are Coach Maple, a warm, honest writing coach assessing a Grade
 ${req.grade} Alberta student's FINISHED piece — ${GENRE_LABEL[req.genre]}${
     req.topic ? ` about "${req.topic}"` : ""
-  }. Produce a report card the student reads themselves.
+  }. Produce the grades the student reads themselves.
 
-Respond with STRICT JSON only — no markdown fences, no text outside the JSON —
-matching exactly this shape:
+Respond with STRICT JSON only — no markdown fences, no text outside the JSON:
 {
   "rubric": [
     { "dimension": "Content", "level": 1, "comment": "..." },
@@ -809,63 +839,29 @@ matching exactly this shape:
     { "dimension": "Vocabulary", "level": 1, "comment": "..." },
     { "dimension": "Conventions", "level": 1, "comment": "..." }
   ],
-  "sentences": [
-    { "text": "...", "comments": [ { "kind": "praise", "note": "..." } ] }
-  ],
   "overall": "..."
 }
 
 ## Rubric rules
-- The five dimensions, in that exact order: Content (ideas and details),
+- All five dimensions, in that exact order: Content (ideas and details),
   Organization (structure and flow for this genre), Sentence Structure
   (variety, correctness of construction), Vocabulary (word choice),
   Conventions (spelling, capitals, punctuation).
 - "level": 1 = Limited, 2 = Adequate, 3 = Proficient, 4 = Excellent — judged
-  against what a Grade ${req.grade} writer is expected to do (see the
-  checklist below), never against adult standards. Be honest — not everything
-  is a 4 — but never harsh.
-- Each "comment": 1–2 sentences a Grade ${req.grade} child can read alone:
+  against what a Grade ${req.grade} writer is expected to do (see below), never
+  against adult standards. Be honest — not everything is a 4 — but never harsh.
+- Judge the WHOLE piece, beginning to end. A strong opening does not excuse a
+  rushed ending, and a weak opening does not define a piece that grows.
+- Each "comment": 1-2 sentences a Grade ${req.grade} child can read alone:
   WHY this level, and the one thing that would lift it to the next level.
 
-## Sentence-by-sentence rules
-- Split the draft into its sentences, in order. EVERY sentence gets an entry
-  with its exact "text" — copied character for character from the draft, so the
-  app can match it. If the piece runs longer than 25 sentences, cover the first
-  25 and stop.
-- At most 2 comments per sentence — only the most valuable. A strong sentence
-  gets one "praise" comment naming exactly what works.
-- "grammar" comments (also use for spelling/punctuation): NAME the error type,
-  QUOTE the exact word(s) where it happens, and EXPLAIN the rule — why it is
-  wrong. Do NOT write the corrected sentence or hand over the fixed words; end
-  with a nudge like "Can you fix it?". The student must make the repair.
-- "structure" comments: when a sentence is bare or repeats the same pattern as
-  its neighbours (e.g. every sentence starts "They..."), you MAY give concrete
-  revision suggestions — combine two sentences with because/although/so, add
-  where/when/why, start with a different opener — and you may show the
-  technique with a tiny example about a DIFFERENT subject, never their own
-  sentence rewritten.
-- "vocabulary" comments: you MAY suggest 2–3 stronger, grade-appropriate
-  replacements for a tired word, each with a quick meaning hint. The student
-  chooses.
-- "content" comments: a spot that needs a detail, an example, or accuracy
-  checked — ask the question that would improve it.
-- Do NOT invent problems. A correct, clear sentence deserves praise, not a
-  manufactured suggestion.
-
-## How to speak to this student
-${BAND_VOICE[band]}
-
-## What a Grade ${req.grade} writer is expected to do
-${BAND_SKILLS[band]}
-${req.grade === 6 ? `\n${GRADE6_SOCIAL_STUDIES}\n` : ""}
-## The checklist for this piece (the shared rubric)
-${req.checklist.map((c) => `- ${c}`).join("\n") || "(none provided)"}
-
 ## "overall"
-2–3 warm sentences: the piece's biggest strength, then the single most
+2-3 warm sentences: the piece's biggest strength, then the single most
 valuable next step as a writer. Address the student${
     req.studentName?.trim() ? ` by name (${req.studentName.trim()})` : ""
   }.
+
+${sharedContext(req)}
 
 ## The student's finished piece
 """
@@ -873,17 +869,72 @@ ${req.draft.trim()}
 """`;
 }
 
-/** The shape the model must return. Enforced by the API, not by hope. */
+/**
+ * Ask for comments on sentences [from, to). The whole numbered piece is shown
+ * so the model can see neighbours — repeated openers and missing links only
+ * exist in context — but it may only answer for the slice it is given.
+ */
+function buildCommentsPrompt(
+  req: ReportCardRequest,
+  sentences: { text: string }[],
+  from: number,
+  to: number
+): string {
+  const numbered = sentences.map((s, i) => `${i}: ${s.text}`).join("\n");
+  return `You are Coach Maple, a warm, honest writing coach reading a Grade
+${req.grade} Alberta student's FINISHED piece — ${GENRE_LABEL[req.genre]}${
+    req.topic ? ` about "${req.topic}"` : ""
+  }. You are writing the sentence-by-sentence notes the student reads themselves.
+
+Respond with STRICT JSON only — no markdown fences, no text outside the JSON:
+{ "items": [ { "index": 0, "comments": [ { "kind": "praise", "note": "..." } ] } ] }
+
+## Which sentences
+- Comment ONLY on sentences ${from} to ${to - 1} inclusive. Ignore the rest —
+  a colleague is covering them. They are shown to you only for context.
+- Give an entry for EVERY index from ${from} to ${to - 1}. None may be skipped.
+  Do not renumber: use the index exactly as it appears in the list.
+- At most 2 comments per sentence — only the most valuable. A strong sentence
+  gets one "praise" comment naming exactly what works.
+- Do NOT invent problems. A correct, clear sentence deserves praise, not a
+  manufactured suggestion. An entry may have one praise comment and nothing
+  else; that is the normal case for a good sentence.
+
+## What each "kind" may say
+- "grammar" (also spelling and punctuation): NAME the error type, QUOTE the
+  exact word(s) where it happens, and EXPLAIN the rule — why it is wrong. Do
+  NOT write the corrected sentence or hand over the fixed words; end with a
+  nudge like "Can you fix it?". The student must make the repair.
+- "structure": when a sentence is bare, is a run-on, or repeats the same
+  pattern as its neighbours (e.g. several in a row starting "He..."), you MAY
+  give concrete revision suggestions — combine two with because/although/so,
+  add where/when/why, start with a different opener — and you may show the
+  technique with a tiny example about a DIFFERENT subject, never their own
+  sentence rewritten.
+- "vocabulary": you MAY suggest 2-3 stronger, grade-appropriate replacements
+  for a tired word, each with a quick meaning hint. The student chooses.
+- "content": a spot that needs a detail, an example, or accuracy checked —
+  ask the question that would improve it.
+- Each "note": 1-2 sentences a Grade ${req.grade} child can read alone.
+
+${sharedContext(req)}
+
+## The whole piece, numbered
+${numbered}
+
+Now write the notes for sentences ${from} to ${to - 1}.`;
+}
+
 /**
  * Only the keywords the structured-output subset accepts: type, properties,
  * required, additionalProperties and enum. Numeric bounds (minItems, maxItems,
- * minimum, maximum) are rejected by the API, so the counts and the 1–4 range
- * are enforced by the prompt and clamped by parseReportCard instead.
+ * minimum, maximum) are rejected by the API, so counts and the 1-4 range are
+ * enforced by the prompt and clamped on the way in.
  */
-const REPORT_CARD_SCHEMA = {
+const RUBRIC_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["rubric", "sentences", "overall"],
+  required: ["rubric", "overall"],
   properties: {
     rubric: {
       type: "array",
@@ -901,14 +952,23 @@ const REPORT_CARD_SCHEMA = {
         },
       },
     },
-    sentences: {
+    overall: { type: "string" },
+  },
+} as const;
+
+const COMMENTS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items"],
+  properties: {
+    items: {
       type: "array",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["text", "comments"],
+        required: ["index", "comments"],
         properties: {
-          text: { type: "string" },
+          index: { type: "integer" },
           comments: {
             type: "array",
             items: {
@@ -927,7 +987,6 @@ const REPORT_CARD_SCHEMA = {
         },
       },
     },
-    overall: { type: "string" },
   },
 } as const;
 
@@ -943,30 +1002,67 @@ interface SentenceNote {
 
 const VALID_KINDS = new Set(["praise", "grammar", "structure", "vocabulary", "content"]);
 
-function parseReportCard(raw: string): { rubric: RubricRow[]; sentences: SentenceNote[]; overall: string } | null {
+/**
+ * One streamed, schema-shaped call. The schema guarantees a parseable reply,
+ * but the structured-output subset is narrower than JSON Schema; if the API
+ * ever rejects it, fall back to plain generation rather than failing a child's
+ * report card.
+ */
+async function askForJson(
+  system: string,
+  schema: Record<string, unknown>,
+  maxTokens: number,
+  label: string
+): Promise<unknown> {
+  const base = {
+    model: CLAUDE_MODEL,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: "user" as const, content: "Respond now." }],
+  };
+  let response;
   try {
-    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    const data = JSON.parse(cleaned);
-    if (!Array.isArray(data.rubric) || !Array.isArray(data.sentences)) return null;
-    const rubric: RubricRow[] = data.rubric.slice(0, 5).map((r: Record<string, unknown>) => ({
-      dimension: String(r.dimension ?? "").slice(0, 40),
-      level: Math.min(4, Math.max(1, Math.round(Number(r.level) || 1))),
-      comment: String(r.comment ?? "").slice(0, 600),
-    }));
-    if (!rubric.length) return null;
-    const sentences: SentenceNote[] = data.sentences.slice(0, 80).map((s: Record<string, unknown>) => ({
-      text: String(s.text ?? "").slice(0, 600),
-      comments: (Array.isArray(s.comments) ? s.comments : [])
-        .slice(0, 3)
-        .map((c: Record<string, unknown>) => ({
-          kind: VALID_KINDS.has(String(c.kind)) ? String(c.kind) : "content",
-          note: String(c.note ?? "").slice(0, 800),
-        })),
-    }));
-    return { rubric, sentences, overall: String(data.overall ?? "").slice(0, 1200) };
-  } catch {
-    return null;
+    response = await getClaude()
+      .messages.stream({
+        ...base,
+        output_config: { effort: "low", format: { type: "json_schema", schema } },
+      })
+      .finalMessage();
+  } catch (error) {
+    const schemaRejected =
+      error instanceof Anthropic.BadRequestError && /output_config|schema/i.test(error.message);
+    if (!schemaRejected) throw error;
+    console.warn(`${label} schema rejected, retrying without it:`, error.message);
+    response = await getClaude()
+      .messages.stream({ ...base, output_config: { effort: "low" } })
+      .finalMessage();
   }
+  if (response.stop_reason === "max_tokens") {
+    console.warn(`${label} hit max_tokens (${maxTokens})`);
+  }
+  const raw = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+  return JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+}
+
+function cleanComments(raw: unknown): { kind: string; note: string }[] {
+  return (Array.isArray(raw) ? raw : [])
+    .slice(0, 3)
+    .map((c: Record<string, unknown>) => ({
+      kind: VALID_KINDS.has(String(c?.kind)) ? String(c.kind) : "content",
+      note: String(c?.note ?? "").slice(0, 800),
+    }))
+    .filter((c) => c.note);
+}
+
+function cleanRubric(raw: unknown): RubricRow[] {
+  return (Array.isArray(raw) ? raw : []).slice(0, 5).map((r: Record<string, unknown>) => ({
+    dimension: String(r?.dimension ?? "").slice(0, 40),
+    level: Math.min(4, Math.max(1, Math.round(Number(r?.level) || 1))),
+    comment: String(r?.comment ?? "").slice(0, 600),
+  }));
 }
 
 app.post("/api/report-card", async (req, res) => {
@@ -997,60 +1093,80 @@ app.post("/api/report-card", async (req, res) => {
         : [],
     };
 
-    // Streamed so a long report can't trip an HTTP timeout, at low effort so
-    // it finishes well inside the hosting platform's function limit, and shaped
-    // by a schema so the reply is always parseable.
-    const started = Date.now();
-    const system = buildReportCardPrompt(rcReq);
-    const messages = [{ role: "user" as const, content: "Write the report card now." }];
-    const base = { model: CLAUDE_MODEL, max_tokens: 3000, system, messages };
-
-    // The schema guarantees a parseable reply, but the structured-output subset
-    // is narrower than JSON Schema. If the API ever rejects the schema, fall
-    // back to plain generation rather than failing the child's report card.
-    let response;
-    try {
-      response = await getClaude()
-        .messages.stream({
-          ...base,
-          output_config: {
-            effort: "low",
-            format: {
-              type: "json_schema",
-              schema: REPORT_CARD_SCHEMA as unknown as Record<string, unknown>,
-            },
-          },
-        })
-        .finalMessage();
-    } catch (error) {
-      const schemaRejected =
-        error instanceof Anthropic.BadRequestError &&
-        /output_config|schema/i.test(error.message);
-      if (!schemaRejected) throw error;
-      console.warn("/api/report-card schema rejected, retrying without it:", error.message);
-      response = await getClaude()
-        .messages.stream({ ...base, output_config: { effort: "low" } })
-        .finalMessage();
-    }
-    const raw = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
-    console.log(
-      `/api/report-card ${Date.now() - started}ms, ${response.usage.output_tokens} out, stop=${response.stop_reason}`
-    );
-
-    const card = parseReportCard(raw);
-    if (!card) {
-      console.error("/api/report-card unparseable output:", raw.slice(0, 400));
-      res.status(502).json({
-        error:
-          response.stop_reason === "max_tokens"
-            ? "That piece was too long for one report card. Try shortening it a little."
-            : "The report card came back garbled — please try again.",
-      });
+    const sentences = splitSentences(rcReq.draft.trim(), MAX_SENTENCES);
+    if (!sentences.length) {
+      res.status(400).json({ error: "There's nothing written yet to report on." });
       return;
     }
+
+    // The rubric and every batch of sentence notes go out together: a long
+    // piece then costs wall-clock time once, not once per batch, which is what
+    // keeps a 60-second serverless budget workable.
+    const started = Date.now();
+    const batches: [number, number][] = [];
+    for (let i = 0; i < sentences.length; i += COMMENT_BATCH) {
+      batches.push([i, Math.min(i + COMMENT_BATCH, sentences.length)]);
+    }
+
+    const [rubricResult, ...batchResults] = await Promise.allSettled([
+      askForJson(buildRubricPrompt(rcReq), RUBRIC_SCHEMA as unknown as Record<string, unknown>, 1500, "rubric"),
+      ...batches.map(([from, to]) =>
+        askForJson(
+          buildCommentsPrompt(rcReq, sentences, from, to),
+          COMMENTS_SCHEMA as unknown as Record<string, unknown>,
+          3000,
+          `comments ${from}-${to - 1}`
+        )
+      ),
+    ]);
+
+    // Without grades there is no report card; without one batch of notes
+    // there is still most of one, and the student can press Re-check.
+    if (rubricResult.status === "rejected") throw rubricResult.reason;
+    const graded = rubricResult.value as { rubric?: unknown; overall?: unknown };
+    const rubric = cleanRubric(graded?.rubric);
+    if (!rubric.length) {
+      console.error("/api/report-card returned no rubric rows");
+      res.status(502).json({ error: "The report card came back garbled — please try again." });
+      return;
+    }
+
+    const notes = new Map<number, { kind: string; note: string }[]>();
+    let failedBatches = 0;
+    batchResults.forEach((result, i) => {
+      if (result.status === "rejected") {
+        failedBatches++;
+        console.error(`/api/report-card batch ${batches[i].join("-")} failed:`, result.reason);
+        return;
+      }
+      const items = (result.value as { items?: unknown })?.items;
+      (Array.isArray(items) ? items : []).forEach((item: Record<string, unknown>) => {
+        const index = Number(item?.index);
+        // A batch may only speak for its own slice, so a stray index from one
+        // batch can never overwrite another's work.
+        if (!Number.isInteger(index) || index < batches[i][0] || index >= batches[i][1]) return;
+        notes.set(index, cleanComments(item?.comments));
+      });
+    });
+
+    if (failedBatches === batches.length) {
+      res.status(502).json({ error: "The report card came back empty — please try again." });
+      return;
+    }
+
+    const card = {
+      rubric,
+      sentences: sentences.map((sentence, i) => ({
+        text: sentence.text,
+        comments: notes.get(i) ?? [],
+      })) as SentenceNote[],
+      overall: String(graded?.overall ?? "").slice(0, 1200),
+    };
+
+    console.log(
+      `/api/report-card ${Date.now() - started}ms, ${sentences.length} sentences, ` +
+        `${batches.length} batches (${failedBatches} failed), ${notes.size} annotated`
+    );
     res.json(card);
   } catch (error) {
     const { status, message } = describeError(error);
