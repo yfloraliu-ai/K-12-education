@@ -7,7 +7,7 @@ export interface ChildProfile {
 }
 
 export interface MeResponse {
-  features: { accounts: boolean; billing: boolean; metered: boolean };
+  features: { accounts: boolean; billing: boolean; metered: boolean; unlock: boolean };
   signedIn: boolean;
   email?: string;
   pro: boolean;
@@ -75,7 +75,7 @@ export async function startCheckout(cycle: "monthly" | "yearly"): Promise<void> 
   window.location.href = url;
 }
 
-export function redeemCode(code: string): Promise<{ ok: boolean }> {
+export function redeemCode(code: string): Promise<{ ok: boolean; pro: boolean }> {
   return call("/api/billing/redeem", { method: "POST", body: JSON.stringify({ code }) });
 }
 

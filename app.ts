@@ -1,6 +1,7 @@
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { dbConfigured } from "./lib/db.js";
+import type { Account } from "./lib/auth.js";
 import {
   createLoginLink,
   currentAccount,
@@ -22,6 +23,16 @@ import {
   syncSubscription,
 } from "./lib/billing.js";
 import { FREE_CREDITS, creditState, mayUseAi, spendCredit } from "./lib/credits.js";
+import { clearPass, codeIsValid, hasPass, issuePass, unlockConfigured } from "./lib/unlock.js";
+
+/**
+ * Full access comes from either a live subscription or a redeemed unlock code.
+ * The code path needs no database, so it is the one that works on a fresh
+ * deploy with only ANTHROPIC_API_KEY set.
+ */
+function isPro(req: express.Request, account: Account | null): boolean {
+  return hasPass(req) || isSubscriptionActive(account);
+}
 
 /**
  * Maple Writing Coach — server.
@@ -471,21 +482,25 @@ app.get("/api/me", async (req, res) => {
     // Whether the server counts free pieces. When false the browser keeps its
     // own tally, which is how the app behaved before accounts existed.
     metered: dbConfigured(),
+    // Whether an unlock code can be redeemed at all on this deploy.
+    unlock: unlockConfigured(),
   };
   const account = await currentAccount(req);
   if (!account) {
-    const state = await creditState(req.query.device);
+    const unlocked = hasPass(req);
+    const state = unlocked ? { used: 0, left: FREE_CREDITS } : await creditState(req.query.device);
     res.json({
       features,
       signedIn: false,
-      pro: false,
+      pro: unlocked,
+      planStatus: unlocked ? "comp" : null,
       creditsUsed: state.used,
-      creditsLeft: state.left,
+      creditsLeft: unlocked ? null : state.left,
       freeCredits: FREE_CREDITS,
     });
     return;
   }
-  const pro = isSubscriptionActive(account);
+  const pro = isPro(req, account);
   const state = pro ? { used: 0, left: FREE_CREDITS } : await creditState(req.query.device);
   res.json({
     features,
@@ -604,27 +619,37 @@ app.post("/api/billing/checkout", async (req, res) => {
   }
 });
 
-/** Redeem a comp code (PRO_UNLOCK_CODES) — beta testers, teachers, goodwill. */
+/**
+ * Redeem an unlock code (PRO_UNLOCK_CODES) — the owner's own access, teachers,
+ * beta families. Deliberately does NOT require a sign-in: it has to work on a
+ * deploy with no database and no email, which is the default.
+ */
 app.post("/api/billing/redeem", async (req, res) => {
-  const account = await currentAccount(req);
-  if (!account) {
-    res.status(401).json({ error: "Please sign in first." });
+  if (!unlockConfigured()) {
+    res.status(503).json({ error: "Unlock codes aren't switched on for this app." });
     return;
   }
-  const codes = (process.env.PRO_UNLOCK_CODES ?? "")
-    .split(",")
-    .map((c) => c.trim().toUpperCase())
-    .filter(Boolean);
-  const given = String(req.body?.code ?? "").trim().toUpperCase();
-  if (!given || !codes.includes(given)) {
+  if (!codeIsValid(req.body?.code)) {
     res.status(400).json({ error: "That code didn't work." });
     return;
   }
-  const { query } = await import("./lib/db.js");
-  await query(
-    `UPDATE accounts SET plan = 'pro', plan_status = 'comp', period_end = NULL WHERE id = $1`,
-    [account.id]
-  );
+  // The cookie is what grants access; marking the account is a convenience so
+  // a signed-in redeemer keeps it on their other devices too.
+  issuePass(res);
+  const account = await currentAccount(req);
+  if (account) {
+    const { query } = await import("./lib/db.js");
+    await query(
+      `UPDATE accounts SET plan = 'pro', plan_status = 'comp', period_end = NULL WHERE id = $1`,
+      [account.id]
+    ).catch((error) => console.error("/api/billing/redeem could not mark the account:", error));
+  }
+  res.json({ ok: true, pro: true });
+});
+
+/** Hand the pass back — useful for testing the free tier on your own machine. */
+app.post("/api/billing/release", (_req, res) => {
+  clearPass(res);
   res.json({ ok: true });
 });
 
@@ -645,7 +670,7 @@ app.post("/api/billing/portal", async (req, res) => {
 /** Called once when a piece is finished, so a free credit is spent server-side. */
 app.post("/api/credits/spend", async (req, res) => {
   const account = await currentAccount(req);
-  if (isSubscriptionActive(account)) {
+  if (isPro(req, account)) {
     res.json({ pro: true, allowed: true, creditsLeft: null });
     return;
   }
@@ -677,7 +702,7 @@ app.post("/api/coach", async (req, res) => {
     }
 
     const account = await currentAccount(req);
-    if (!(await mayUseAi(isSubscriptionActive(account), body.device, body.piece))) {
+    if (!(await mayUseAi(isPro(req, account), body.device, body.piece))) {
       res.status(402).json({ error: "Your free pieces are used up. Subscribe to keep writing." });
       return;
     }
@@ -956,7 +981,7 @@ app.post("/api/report-card", async (req, res) => {
       return;
     }
     const account = await currentAccount(req);
-    if (!(await mayUseAi(isSubscriptionActive(account), body.device, body.piece))) {
+    if (!(await mayUseAi(isPro(req, account), body.device, body.piece))) {
       res.status(402).json({ error: "Your free pieces are used up. Subscribe to keep writing." });
       return;
     }

@@ -182,11 +182,15 @@ export default function App() {
         total={FREE_CREDITS}
         signedIn={!!me?.signedIn}
         billingReady={!!me?.features.billing}
+        unlockReady={!!me?.features.unlock}
         onSignIn={() => {
           setSignInReason("subscribe");
           setView("signin");
         }}
         onRedeemed={() => {
+          // Remember it locally as well: the pass cookie is the real grant,
+          // but this keeps the app unlocked if /api/me is briefly unreachable.
+          setState((prev) => ({ ...prev, plan: "pro" }));
           refreshMe();
           setView("home");
         }}

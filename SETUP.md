@@ -58,11 +58,39 @@ With `sk_test_...` keys, pay with card `4242 4242 4242 4242`, any future expiry,
 any CVC. Watch the webhook deliveries in the Stripe dashboard; a red delivery
 means the URL or signing secret is wrong.
 
-## 4. Comp codes (optional)
+## 4. Unlock codes — your own access, and comps
 
-`PRO_UNLOCK_CODES="MAPLE-TEACHER,MAPLE-BETA"` lets a signed-in account unlock Pro
-without paying — useful for beta testers, teachers, or making good on a problem.
-Codes are checked on the server, so they can't be found by reading the page.
+`PRO_UNLOCK_CODES` is a comma-separated list of codes that unlock the full app
+without paying: your own access, teachers, beta families, or making good on a
+problem.
+
+```
+PRO_UNLOCK_CODES="MAPLE-ADMIN-XXXXX-XXXXX-XXXXX,MAPLE-TEACH-XXXXX-XXXXX-XXXXX"
+```
+
+**This is the one paid-tier switch that needs nothing else.** No database, no
+email, no Stripe — set the variable, redeploy, done. Steps 1-3 above are only
+needed to charge other people.
+
+To redeem: open the app, click the **"N free pieces left"** button in the
+top-right (it's there from the first visit — you don't have to use up your free
+pieces first), type the code, press **Unlock**. The header turns to **Pro** and
+the limit is gone.
+
+How it works, and what it does not do:
+
+- Codes are checked on the server and never reach the browser, so they can't be
+  found by reading the page.
+- Redeeming sets a signed, HttpOnly cookie that lasts a year. It unlocks **that
+  browser**, not an account — unlock each device you use. (If a database and
+  email are configured and you're signed in, the account is marked comp as
+  well, so it follows you.)
+- Editing or removing a code revokes every pass issued under it. Set
+  `UNLOCK_SECRET` to a new value to revoke passes while keeping the codes.
+- `POST /api/billing/release` hands the pass back, for testing the free tier.
+
+Treat these codes like passwords: anyone who has one gets unlimited AI usage
+billed to your Anthropic key. Keep them out of the repository.
 
 ## What is stored where
 

@@ -9,6 +9,8 @@ interface Props {
   /** Checkout needs an account first; false sends them to sign-in. */
   signedIn: boolean;
   billingReady: boolean;
+  /** Whether this deploy has any unlock codes configured. */
+  unlockReady: boolean;
   onSignIn: () => void;
   onRedeemed: () => void;
   onExit: () => void;
@@ -28,6 +30,7 @@ export default function Paywall({
   total,
   signedIn,
   billingReady,
+  unlockReady,
   onSignIn,
   onRedeemed,
   onExit,
@@ -150,7 +153,7 @@ export default function Paywall({
         </button>
       )}
 
-      {signedIn && (
+      {unlockReady && (
         <div className="border-2 border-line rounded-lg p-5 mb-6">
           <label className="block font-bold text-sm mb-2">
             <span className="hl-b px-1">Have an unlock code?</span>
