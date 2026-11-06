@@ -1,4 +1,4 @@
-import type { CommentKind, ReportCard, SentenceMark } from "../types";
+import type { CommentKind, FixCheck, ReportCard, SentenceMark } from "../types";
 
 /**
  * One number out of 100, built from the report card the coach already writes.
@@ -84,17 +84,31 @@ function clampLevel(level: unknown): number {
 }
 
 /**
+ * How much a rewrite is worth. Once the coach has read it, the verdict decides:
+ * changing a sentence is not the same as improving it, so a rewrite that did
+ * not solve anything earns nothing. A rewrite the coach has not seen yet still
+ * counts in full — the badge labels that gain as provisional.
+ */
+const VERDICT_CREDIT: Record<string, number> = { fixed: 1, closer: 0.5, "not-yet": 0 };
+
+function creditFor(check: FixCheck | undefined, rewrite: string): number {
+  if (!check) return 1;
+  // An edit made after the check leaves the old verdict behind; treat the new
+  // wording as unchecked rather than judging it by the previous one.
+  if (check.of !== rewrite) return 1;
+  return VERDICT_CREDIT[check.verdict] ?? 1;
+}
+
+/**
  * Score a card. `marks` are the student's decisions in the finished piece:
  * a sentence they rewrote counts its notes as addressed, one they chose to
- * keep does not — so undoing a fix moves the number back down.
- *
- * A rewrite earns the credit without the coach re-reading it, which is why the
- * badge labels any gain as provisional and points at Re-check: regenerating
- * the card is what turns a projected score into a graded one.
+ * keep does not — so undoing a fix moves the number back down. `checks` is the
+ * coach's verdict on each rewrite, which scales that credit.
  */
 export function computeScore(
   card: ReportCard | null | undefined,
-  marks: Record<number, SentenceMark> = {}
+  marks: Record<number, SentenceMark> = {},
+  checks: Record<number, FixCheck> = {}
 ): Score | null {
   const rubric = card?.rubric;
   if (!card || !Array.isArray(rubric) || rubric.length === 0) return null;
@@ -102,12 +116,12 @@ export function computeScore(
   const issues: Record<string, number> = {};
   const resolved: Record<string, number> = {};
   card.sentences?.forEach((sentence, index) => {
-    const fixed = marks[index] === "revised";
+    const credit = marks[index] === "revised" ? creditFor(checks[index], sentence.text) : 0;
     sentence.comments?.forEach((comment) => {
       const key = KIND_DIMENSION[comment.kind];
       if (!key) return;
       issues[key] = (issues[key] ?? 0) + 1;
-      if (fixed) resolved[key] = (resolved[key] ?? 0) + 1;
+      if (credit > 0) resolved[key] = (resolved[key] ?? 0) + credit;
     });
   });
 
@@ -115,7 +129,7 @@ export function computeScore(
     const key = dimensionKey(row.dimension ?? "");
     const baseLevel = clampLevel(row.level);
     const found = key ? (issues[key] ?? 0) : 0;
-    const done = key ? (resolved[key] ?? 0) : 0;
+    const done = key ? Math.min(found, resolved[key] ?? 0) : 0;
     // Clearing every note in a dimension carries it the whole way to 4;
     // clearing half carries it half way. Nothing found leaves it as graded.
     const level = found > 0 ? baseLevel + (done / found) * (4 - baseLevel) : baseLevel;
@@ -126,7 +140,7 @@ export function computeScore(
       level,
       points: levelToPoints(level),
       issues: found,
-      resolved: done,
+      resolved: Math.round(done * 10) / 10,
     };
   });
 
@@ -147,7 +161,7 @@ export function computeScore(
 
 /** The score a freshly written card gives, before the student fixes anything. */
 export function baseScore(card: ReportCard | null | undefined): number | null {
-  return computeScore(card, {})?.points ?? null;
+  return computeScore(card, {}, {})?.points ?? null;
 }
 
 /** How many graded scores a piece remembers. */

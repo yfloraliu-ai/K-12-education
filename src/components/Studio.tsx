@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import type { CoachAction, Project, Stage } from "../types";
 import { GENRES, checklistForGrade, plannerForGrade } from "../data/curriculum";
-import { askCoach, fetchReportCard } from "../services/api";
+import { askCoach, checkFix, fetchReportCard } from "../services/api";
 import CoachChat from "./CoachChat";
 import Checklist from "./Checklist";
 import ReportCard from "./ReportCard";
@@ -72,6 +72,9 @@ export default function Studio({
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The sentence whose rewrite the coach is reading right now. */
+  const [checking, setChecking] = useState<number | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
   const genre = GENRES.find((g) => g.id === project.genre)!;
   const plannerFields = plannerForGrade(genre, project.grade);
   const checklist = checklistForGrade(genre, project.grade);
@@ -148,7 +151,12 @@ export default function Studio({
   // The badge keeps showing the last score even once the draft has moved on —
   // a number that vanishes mid-edit teaches nothing — but flags it as stale.
   const marks = project.reportCard?.marks ?? {};
-  const score = computeScore(project.reportCard?.card, marks);
+  const checks = project.reportCard?.checks ?? {};
+  // While the coach is reading a rewrite, withhold its credit. Awarding it
+  // optimistically makes the badge jump up and then fall back when the verdict
+  // says "not yet" — promising points the student has not earned.
+  const scoreMarks = checking === null ? marks : { ...marks, [checking]: undefined as never };
+  const score = computeScore(project.reportCard?.card, scoreMarks, checks);
   const scoreStale = !!project.reportCard && project.reportCard.draft !== project.draft;
 
   const loadReportCard = useCallback(async () => {
@@ -195,6 +203,79 @@ export default function Studio({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.stage]);
+
+  /**
+   * "Did I fix it?" — saving a rewrite now asks the coach to read it, so a
+   * wrong fix no longer feels exactly like a right one. The popover stays open
+   * and shows the answer.
+   */
+
+  const reviseSentence = useCallback(
+    async (index: number, start: number, end: number, newText: string) => {
+      const before = projectRef.current;
+      const card = before.reportCard?.card;
+      if (!card) return;
+      // The coach judges against the sentence it originally graded, not against
+      // the student's previous attempt.
+      const original = before.reportCard?.originals?.[index] ?? card.sentences[index]?.text ?? "";
+      const notes = card.sentences[index]?.comments ?? [];
+
+      onUpdate((p) => {
+        if (!p.reportCard) return p;
+        const nextDraft = p.draft.slice(0, start) + newText + p.draft.slice(end);
+        const sentences = p.reportCard.card.sentences.map((s, i) =>
+          i === index ? { ...s, text: newText } : s
+        );
+        return {
+          ...p,
+          draft: nextDraft,
+          reportCard: {
+            // Keep draft in sync so the card isn't seen as stale and silently
+            // regenerated behind the student.
+            draft: nextDraft,
+            card: { ...p.reportCard.card, sentences },
+            marks: { ...p.reportCard.marks, [index]: "revised" },
+            originals: {
+              ...p.reportCard.originals,
+              // Only on the first rewrite: "first try" means the graded
+              // sentence, not the previous attempt.
+              [index]: p.reportCard.originals?.[index] ?? p.reportCard.card.sentences[index].text,
+            },
+            checks: p.reportCard.checks,
+          },
+          updatedAt: Date.now(),
+        };
+      });
+
+      setChecking(index);
+      setCheckError(null);
+      try {
+        const check = await checkFix({
+          grade: before.grade,
+          genre: before.genre,
+          topic: before.topic,
+          original,
+          rewrite: newText,
+          notes,
+          piece: before.id,
+        });
+        onUpdate((p) =>
+          p.reportCard
+            ? {
+                ...p,
+                reportCard: { ...p.reportCard, checks: { ...p.reportCard.checks, [index]: check } },
+                updatedAt: Date.now(),
+              }
+            : p
+        );
+      } catch (e) {
+        setCheckError(e instanceof Error ? e.message : "Something went wrong.");
+      } finally {
+        setChecking(null);
+      }
+    },
+    [onUpdate]
+  );
 
   const setStage = (stage: Stage) => onUpdate((p) => ({ ...p, stage, updatedAt: Date.now() }));
 
@@ -405,34 +486,10 @@ export default function Studio({
                     card={card}
                     marks={project.reportCard?.marks ?? {}}
                     originals={project.reportCard?.originals ?? {}}
-                    onRevise={(index, start, end, newText) =>
-                      onUpdate((p) => {
-                        if (!p.reportCard) return p;
-                        const nextDraft = p.draft.slice(0, start) + newText + p.draft.slice(end);
-                        const sentences = p.reportCard.card.sentences.map((s, i) =>
-                          i === index ? { ...s, text: newText } : s
-                        );
-                        return {
-                          ...p,
-                          draft: nextDraft,
-                          reportCard: {
-                            // Keep draft in sync so the card isn't seen as stale
-                            // and silently regenerated behind the student.
-                            draft: nextDraft,
-                            card: { ...p.reportCard.card, sentences },
-                            marks: { ...p.reportCard.marks, [index]: "revised" },
-                            originals: {
-                              ...p.reportCard.originals,
-                              // Only on the first rewrite: "first try" means the
-                              // graded sentence, not the previous attempt.
-                              [index]:
-                                p.reportCard.originals?.[index] ?? p.reportCard.card.sentences[index].text,
-                            },
-                          },
-                          updatedAt: Date.now(),
-                        };
-                      })
-                    }
+                    checks={checks}
+                    checking={checking}
+                    checkError={checkError}
+                    onRevise={reviseSentence}
                     onRevert={(index, start, end) =>
                       onUpdate((p) => {
                         const first = p.reportCard?.originals?.[index];
@@ -445,10 +502,18 @@ export default function Studio({
                         delete originals[index];
                         const marks = { ...p.reportCard.marks };
                         delete marks[index];
+                        const checks = { ...p.reportCard.checks };
+                        delete checks[index];
                         return {
                           ...p,
                           draft: nextDraft,
-                          reportCard: { draft: nextDraft, card: { ...p.reportCard.card, sentences }, marks, originals },
+                          reportCard: {
+                            draft: nextDraft,
+                            card: { ...p.reportCard.card, sentences },
+                            marks,
+                            originals,
+                            checks,
+                          },
                           updatedAt: Date.now(),
                         };
                       })
@@ -500,6 +565,7 @@ export default function Studio({
                 card={card}
                 marks={project.reportCard?.marks ?? {}}
                 originals={project.reportCard?.originals ?? {}}
+                checks={checks}
                 loading={reportLoading}
                 error={reportError}
                 onRetry={loadReportCard}

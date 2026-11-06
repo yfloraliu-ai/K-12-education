@@ -36,6 +36,23 @@ export interface ReportCard {
 /** What the student decided about one sentence's feedback. */
 export type SentenceMark = "revised" | "kept";
 
+/** Did the rewrite actually solve what the coach pointed at? */
+export type FixVerdict = "fixed" | "closer" | "not-yet";
+
+/**
+ * The coach's answer to "did I fix it?" — checked against the notes that were
+ * on the sentence, one line per note, never containing a corrected sentence.
+ */
+export interface FixCheck {
+  verdict: FixVerdict;
+  headline: string;
+  points: { kind: CommentKind; solved: boolean; note: string }[];
+  /** A problem the rewrite introduced that was not there before. */
+  watchOut?: string;
+  /** The rewrite this verdict describes, so a later edit shows as unchecked. */
+  of: string;
+}
+
 /** A score out of 100 recorded the moment a report card was written. */
 export interface ScoreEntry {
   at: number;
@@ -72,6 +89,8 @@ export interface Project {
      * one in between.
      */
     originals?: Record<number, string>;
+    /** The coach's verdict on each rewrite, by the same index. */
+    checks?: Record<number, FixCheck>;
   } | null;
   /**
    * One entry per graded report card, oldest first, so the writer can see the

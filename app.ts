@@ -1080,6 +1080,181 @@ function cleanRubric(raw: unknown): RubricRow[] {
   }));
 }
 
+interface FixCheckRequest {
+  grade: Grade;
+  genre: GenreId;
+  topic: string;
+  original: string;
+  rewrite: string;
+  notes: { kind: string; note: string }[];
+}
+
+/**
+ * "Did I fix it?" — the half of the loop that was missing. A student rewrote a
+ * sentence and nobody told them whether it worked, so a wrong fix felt exactly
+ * like a right one.
+ *
+ * Same contract as everywhere else: the coach says WHETHER each note is dealt
+ * with and WHY, and if it is not, points at it again a different way. It never
+ * supplies the corrected sentence, because then the student would stop being
+ * the one doing the writing.
+ */
+function buildFixCheckPrompt(req: FixCheckRequest): string {
+  const band = gradeBand(req.grade);
+  return `You are Coach Maple. A Grade ${req.grade} Alberta student has just
+rewritten one sentence of their ${GENRE_LABEL[req.genre]}${
+    req.topic ? ` about "${req.topic}"` : ""
+  } to deal with your notes. Tell them whether it worked.
+
+Respond with STRICT JSON only — no markdown fences, no text outside the JSON:
+{
+  "verdict": "fixed",
+  "headline": "...",
+  "points": [ { "kind": "grammar", "solved": true, "note": "..." } ],
+  "watchOut": "..."
+}
+
+## The sentence before
+"""
+${req.original}
+"""
+
+## What you had asked them to look at
+${req.notes.map((n) => `- (${n.kind}) ${n.note}`).join("\n") || "- (general) Make this sentence stronger."}
+
+## Their rewrite
+"""
+${req.rewrite}
+"""
+
+## Rules
+- "points": ONE entry per note above, in the same order, with the same "kind".
+  "solved" is true only if that note is genuinely dealt with in the rewrite.
+- When solved: name the MOVE they made, so they can repeat it on purpose —
+  "you started with 'Across quiet streams', a where-phrase opener", "you swapped
+  'good' for 'powerful'". Praise the technique, not just the result.
+- When NOT solved: say plainly that it is still there, point at the exact word
+  or spot, and explain it a DIFFERENT way than the first note did — a second
+  angle helps where repeating yourself does not. NEVER write the corrected
+  sentence and never hand over the exact word to use. End with a question or a
+  nudge so they try again.
+- "watchOut": only when the rewrite introduced a NEW problem that was not in
+  the original (a run-on, a new spelling slip, a lost capital). Name it,
+  explain why, do NOT fix it. Omit this field entirely when there is nothing
+  new. Do not invent one to seem thorough.
+- "verdict": "fixed" when every note is solved and nothing new broke;
+  "closer" when some are solved, or all are solved but something new broke;
+  "not-yet" when none are solved.
+- "headline": ONE warm sentence the student reads first. Be honest — "not yet"
+  must not sound like "yes". Never sarcastic, never deflating.
+- A rewrite that is different but no better is "not-yet", not "closer".
+  Changing words is not the same as fixing the problem.
+
+## How to speak to this student
+${BAND_VOICE[band]}
+
+## What a Grade ${req.grade} writer is expected to do
+${BAND_SKILLS[band]}`;
+}
+
+const FIX_CHECK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["verdict", "headline", "points"],
+  properties: {
+    verdict: { type: "string", enum: ["fixed", "closer", "not-yet"] },
+    headline: { type: "string" },
+    points: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "solved", "note"],
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["praise", "grammar", "structure", "vocabulary", "content"],
+          },
+          solved: { type: "boolean" },
+          note: { type: "string" },
+        },
+      },
+    },
+    watchOut: { type: "string" },
+  },
+} as const;
+
+const VALID_VERDICTS = new Set(["fixed", "closer", "not-yet"]);
+
+app.post("/api/check-fix", async (req, res) => {
+  try {
+    const body = req.body as Partial<FixCheckRequest> & { device?: unknown; piece?: unknown };
+    const original = String(body.original ?? "").trim().slice(0, 1200);
+    const rewrite = String(body.rewrite ?? "").trim().slice(0, 1200);
+    if (!VALID_GRADES.includes(Number(body.grade)) || !VALID_GENRES.includes(String(body.genre))) {
+      res.status(400).json({ error: "Invalid check request." });
+      return;
+    }
+    if (!original || !rewrite) {
+      res.status(400).json({ error: "Nothing to check yet." });
+      return;
+    }
+
+    const account = await currentAccount(req);
+    if (!(await mayUseAi(isPro(req, account), body.device, body.piece))) {
+      res.status(402).json({ error: "Your free pieces are used up. Subscribe to keep writing." });
+      return;
+    }
+
+    const notes = (Array.isArray(body.notes) ? body.notes : [])
+      .slice(0, 3)
+      .map((n: { kind?: unknown; note?: unknown }) => ({
+        kind: VALID_KINDS.has(String(n?.kind)) ? String(n.kind) : "content",
+        note: String(n?.note ?? "").slice(0, 800),
+      }))
+      .filter((n) => n.note);
+
+    const checkReq: FixCheckRequest = {
+      grade: Number(body.grade) as Grade,
+      genre: body.genre as GenreId,
+      topic: String(body.topic ?? "").slice(0, 300),
+      original,
+      rewrite,
+      notes,
+    };
+
+    const data = (await askForJson(
+      buildFixCheckPrompt(checkReq),
+      FIX_CHECK_SCHEMA as unknown as Record<string, unknown>,
+      1200,
+      "check-fix"
+    )) as Record<string, unknown>;
+
+    const verdict = VALID_VERDICTS.has(String(data?.verdict)) ? String(data.verdict) : "closer";
+    const points = (Array.isArray(data?.points) ? data.points : [])
+      .slice(0, 3)
+      .map((p: Record<string, unknown>) => ({
+        kind: VALID_KINDS.has(String(p?.kind)) ? String(p.kind) : "content",
+        solved: p?.solved === true,
+        note: String(p?.note ?? "").slice(0, 800),
+      }))
+      .filter((p) => p.note);
+    const watchOut = String(data?.watchOut ?? "").slice(0, 600).trim();
+
+    res.json({
+      verdict,
+      headline: String(data?.headline ?? "").slice(0, 400),
+      points,
+      ...(watchOut ? { watchOut } : {}),
+      of: rewrite,
+    });
+  } catch (error) {
+    const { status, message } = describeError(error);
+    console.error("/api/check-fix failed:", error);
+    res.status(status).json({ error: message });
+  }
+});
+
 app.post("/api/report-card", async (req, res) => {
   try {
     const body = req.body as Partial<ReportCardRequest>;

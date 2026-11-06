@@ -1,4 +1,4 @@
-import type { ChatMessage, CoachAction, Grade, GenreId, ReportCard, Stage } from "../types";
+import type { ChatMessage, CoachAction, CommentKind, FixCheck, Grade, GenreId, ReportCard, Stage } from "../types";
 import { deviceId } from "./account";
 
 export interface CoachPayload {
@@ -63,4 +63,26 @@ export async function askCoach(payload: CoachPayload): Promise<string> {
     throw new Error(data.error || `The coach couldn't answer (HTTP ${res.status}).`);
   }
   return String(data.reply ?? "");
+}
+
+/** "Did I fix it?" — checked against the notes that were on the sentence. */
+export async function checkFix(payload: {
+  grade: Grade;
+  genre: GenreId;
+  topic: string;
+  original: string;
+  rewrite: string;
+  notes: { kind: CommentKind; note: string }[];
+  piece: string;
+}): Promise<FixCheck> {
+  const res = await fetch("/api/check-fix", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, device: deviceId() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Coach Maple couldn't check that (HTTP ${res.status}).`);
+  }
+  return data as FixCheck;
 }

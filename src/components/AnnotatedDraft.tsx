@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CommentKind, ReportCard, SentenceMark } from "../types";
-import { CheckIcon, XIcon } from "./icons";
+import type { CommentKind, FixCheck, FixVerdict, ReportCard, SentenceMark } from "../types";
+import { CheckIcon, SparkleIcon, XIcon } from "./icons";
 
 interface Props {
   draft: string;
@@ -8,6 +8,11 @@ interface Props {
   marks: Record<number, SentenceMark>;
   /** Each rewritten sentence as the coach first graded it, by index. */
   originals: Record<number, string>;
+  /** The coach's verdict on each rewrite, by the same index. */
+  checks: Record<number, FixCheck>;
+  /** The sentence the coach is reading right now, if any. */
+  checking: number | null;
+  checkError: string | null;
   /** Replace one sentence in the draft with the student's own rewrite. */
   onRevise: (index: number, start: number, end: number, newText: string) => void;
   /** Put a rewritten sentence back the way it was. */
@@ -22,6 +27,12 @@ const KIND_STYLE: Record<CommentKind, { label: string; hl: string; line: string 
   structure: { label: "Sentence craft", hl: "hl-b", line: "#7de8ff" },
   vocabulary: { label: "Word choice", hl: "hl-y", line: "#fdf151" },
   content: { label: "Ideas", hl: "hl-b", line: "#7de8ff" },
+};
+
+const VERDICT_STYLE: Record<FixVerdict, { label: string; hl: string }> = {
+  fixed: { label: "You fixed it", hl: "hl-g" },
+  closer: { label: "Closer", hl: "hl-y" },
+  "not-yet": { label: "Not yet", hl: "hl-p" },
 };
 
 /** The kind that decides a sentence's underline: fixes outrank praise. */
@@ -56,7 +67,18 @@ function buildSegments(draft: string, sentences: { text: string }[]): Segment[] 
   return segments;
 }
 
-export default function AnnotatedDraft({ draft, card, marks, originals, onRevise, onRevert, onMark }: Props) {
+export default function AnnotatedDraft({
+  draft,
+  card,
+  marks,
+  originals,
+  checks,
+  checking,
+  checkError,
+  onRevise,
+  onRevert,
+  onMark,
+}: Props) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [rewrite, setRewrite] = useState("");
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -114,6 +136,14 @@ export default function AnnotatedDraft({ draft, card, marks, originals, onRevise
   };
 
   const openSegment = clickable.find((s) => s.index === openIndex);
+  const isRevised = openSegment !== undefined && originals[openSegment.index] !== undefined;
+  const isChecking = openSegment !== undefined && checking === openSegment.index;
+  // A verdict only speaks for the wording it was given; once the student edits
+  // again it is stale and the panel waits for the new answer rather than
+  // showing an old "not yet" against a sentence that has since changed.
+  const storedCheck = openSegment ? checks[openSegment.index] : undefined;
+  const freshCheck = storedCheck && storedCheck.of === openSegment?.text ? storedCheck : undefined;
+  const changed = !!openSegment && !!rewrite.trim() && rewrite.trim() !== openSegment.text;
 
   return (
     <div>
@@ -152,7 +182,14 @@ export default function AnnotatedDraft({ draft, card, marks, originals, onRevise
                 }}
               >
                 {seg.text}
-                {mark === "revised" && <span className="text-hg font-extrabold"> ✓</span>}
+                {mark === "revised" &&
+                  (checks[seg.index]?.verdict === "fixed" ? (
+                    <span className="text-hg font-extrabold"> ✓</span>
+                  ) : checks[seg.index] ? (
+                    <span className="text-stone-400 font-extrabold"> ·</span>
+                  ) : (
+                    <span className="text-hg font-extrabold"> ✓</span>
+                  ))}
               </button>
             );
           })}
@@ -216,43 +253,113 @@ export default function AnnotatedDraft({ draft, card, marks, originals, onRevise
               )}
             </ul>
 
+            {/* Did it work? The half of the loop that used to be missing: the
+                popover stays open after a save so the answer lands here. */}
+            {isChecking ? (
+              <div className="border-2 border-line rounded-lg p-3 mb-3 flex items-center gap-2.5">
+                <span className="shrink-0">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </span>
+                <span className="text-[13px] font-semibold text-stone-500">
+                  Coach Maple is reading your new sentence…
+                </span>
+              </div>
+            ) : checkError && isRevised ? (
+              <div className="border-2 border-line rounded-lg p-3 mb-3">
+                <p className="text-[13px] font-semibold mb-2">
+                  <span className="hl-p px-0.5">Couldn't check that:</span> {checkError}
+                </p>
+                <button
+                  onClick={() => onRevise(openSegment.index, openSegment.start, openSegment.end, openSegment.text)}
+                  className="border-2 border-ink rounded-full px-4 py-1.5 font-bold text-[12px] hover:bg-hy transition"
+                >
+                  Try checking again
+                </button>
+              </div>
+            ) : freshCheck ? (
+              <div className="border-2 border-ink rounded-lg p-3 mb-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <SparkleIcon size={14} />
+                  <span className={`text-[11px] font-extrabold uppercase tracking-widest ${VERDICT_STYLE[freshCheck.verdict].hl} px-1`}>
+                    {VERDICT_STYLE[freshCheck.verdict].label}
+                  </span>
+                </div>
+                {freshCheck.headline && (
+                  <p className="text-[13.5px] leading-relaxed font-medium mb-2">{freshCheck.headline}</p>
+                )}
+                <ul className="space-y-1.5">
+                  {freshCheck.points.map((point, j) => {
+                    const style = KIND_STYLE[point.kind] ?? KIND_STYLE.content;
+                    return (
+                      <li key={j} className="text-[13px] leading-relaxed flex gap-1.5">
+                        <span className={`font-extrabold shrink-0 ${point.solved ? "text-hg" : "text-stone-300"}`}>
+                          {point.solved ? "✓" : "○"}
+                        </span>
+                        <span>
+                          <span className={`font-extrabold text-[11px] ${style.hl} px-1 mr-1.5`}>{style.label}</span>
+                          {point.note}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {freshCheck.watchOut && (
+                  <p className="text-[13px] leading-relaxed mt-2 pt-2 border-t-2 border-line">
+                    <span className="font-extrabold text-[11px] hl-p px-1 mr-1.5">New thing</span>
+                    {freshCheck.watchOut}
+                  </p>
+                )}
+              </div>
+            ) : null}
+
             <label className="block text-[11px] font-bold uppercase tracking-widest text-stone-400 mb-1.5">
-              {originals[openSegment.index] !== undefined ? "Change it again" : "Your fix — you write it"}
+              {isRevised ? "Change it again" : "Your fix — you write it"}
             </label>
             <textarea
               value={rewrite}
               onChange={(e) => setRewrite(e.target.value)}
               rows={3}
-              className="w-full rounded-lg border-2 border-line focus:border-ink focus:outline-none px-3 py-2 text-[14px] leading-relaxed resize-y mb-2.5"
+              disabled={isChecking}
+              className="w-full rounded-lg border-2 border-line focus:border-ink focus:outline-none px-3 py-2 text-[14px] leading-relaxed resize-y mb-2.5 disabled:opacity-50"
             />
 
             <div className="flex gap-2">
+              {changed ? (
+                <button
+                  disabled={isChecking}
+                  onClick={() =>
+                    onRevise(openSegment.index, openSegment.start, openSegment.end, rewrite.trim())
+                  }
+                  className="flex-1 bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold text-[13px] rounded-full py-2 transition flex items-center justify-center gap-1.5"
+                >
+                  <CheckIcon size={14} className="text-hy" />
+                  {isRevised ? "Check my new try" : "Save my fix"}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setOpenIndex(null)}
+                  disabled={isChecking}
+                  className="flex-1 bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold text-[13px] rounded-full py-2 transition"
+                >
+                  Done
+                </button>
+              )}
               <button
-                disabled={!rewrite.trim() || rewrite.trim() === openSegment.text}
+                disabled={isChecking}
                 onClick={() => {
-                  onRevise(openSegment.index, openSegment.start, openSegment.end, rewrite.trim());
-                  setOpenIndex(null);
-                }}
-                className="flex-1 bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold text-[13px] rounded-full py-2 transition flex items-center justify-center gap-1.5"
-              >
-                <CheckIcon size={14} className="text-hy" /> Save my fix
-              </button>
-              <button
-                onClick={() => {
-                  if (originals[openSegment.index] !== undefined) {
+                  if (isRevised) {
                     onRevert(openSegment.index, openSegment.start, openSegment.end);
+                    setOpenIndex(null);
                   } else {
                     onMark(openSegment.index, marks[openSegment.index] === "kept" ? null : "kept");
+                    setOpenIndex(null);
                   }
-                  setOpenIndex(null);
                 }}
-                className="border-2 border-ink rounded-full px-4 py-2 font-bold text-[13px] hover:bg-hy transition whitespace-nowrap"
+                className="border-2 border-ink rounded-full px-4 py-2 font-bold text-[13px] hover:bg-hy disabled:opacity-30 transition whitespace-nowrap"
               >
-                {originals[openSegment.index] !== undefined
-                  ? "Undo my fix"
-                  : marks[openSegment.index] === "kept"
-                    ? "Undo"
-                    : "Keep it"}
+                {isRevised ? "Undo my fix" : marks[openSegment.index] === "kept" ? "Undo" : "Keep it"}
               </button>
             </div>
           </div>

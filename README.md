@@ -27,7 +27,13 @@ answers — so students build real writing skills:
    picks & explains), **Sentence Stretcher 🐍** (teach a move on a different
    example, student applies it), **Detail Detective 🔍** (elaboration questions),
    **Star Feedback ⭐** (2 glows + 1 grow against the grade-level checklist).
-5. **Shine 🌟** — celebrate, self-check against the checklist, copy/print.
+5. **Shine 🌟** — a report card the student reads themselves: five dimensions
+   graded 1–4, a note on every sentence, and one score out of 100 in the
+   corner. Tapping a sentence shows the notes; rewriting it keeps the first
+   try beside the new version, and the coach reads the rewrite and says
+   **whether it actually worked** — naming the move when it did, pointing at
+   what is still there (never supplying the fix) when it did not. Only a
+   confirmed fix moves the score.
 
 Plus the **Skill Gym 🏋️**: interactive mini-lessons with quizzes on topic
 sentences, hamburger paragraphs, elaboration, word power-ups, sentence
@@ -39,6 +45,7 @@ prompt), so the client can never turn the coach into a ghostwriter.
 ## Run it
 
 ```bash
+cd writing-coach
 npm install
 cp .env.example .env   # add your ANTHROPIC_API_KEY
 npm run dev            # http://localhost:3000
@@ -46,11 +53,9 @@ npm run dev            # http://localhost:3000
 
 ## Deploy to Vercel
 
-Import this repository as a Vercel project and set the `ANTHROPIC_API_KEY`
-environment variable (Project Settings → Environment Variables). The included
-`vercel.json` handles the rest (static Vite build + `/api/*` serverless
-function). Never commit the key — this repository is public; the key lives
-only in Vercel's environment settings.
+Create a new Vercel project with **Root Directory = `writing-coach`** and set
+the `ANTHROPIC_API_KEY` environment variable. The included `vercel.json`
+handles the rest (static Vite build + `/api/*` serverless function).
 
 ## Stack
 
