@@ -214,22 +214,24 @@ export default function AnnotatedDraft({
               </button>
             </div>
 
-            {originals[openSegment.index] !== undefined && (
+            {(isRevised || changed) && (
               <div className="border-2 border-line rounded-lg overflow-hidden mb-3">
                 <div className="px-3 py-2 border-b-2 border-line bg-soft">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-0.5">
                     Your first try
                   </div>
                   <p className="text-[13.5px] leading-relaxed text-stone-500">
-                    {originals[openSegment.index]}
+                    {originals[openSegment.index] ?? openSegment.text}
                   </p>
                 </div>
                 <div className="px-3 py-2">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-0.5">
-                    Your new version
+                    {changed ? "Your new version — not saved yet" : "Your new version"}
                   </div>
                   <p className="text-[13.5px] leading-relaxed font-semibold">
-                    <span className="hl-g px-0.5">{openSegment.text}</span>
+                    <span className={changed ? "hl-y px-0.5" : "hl-g px-0.5"}>
+                      {changed ? rewrite.trim() : openSegment.text}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -326,9 +328,20 @@ export default function AnnotatedDraft({
             />
 
             <div className="flex gap-2">
-              {changed ? (
+              {/* "Done" is only an honest primary action once there IS something
+                  done. On an untouched sentence it reads as "nothing to do here",
+                  so the ask stays on screen, greyed, until they write something. */}
+              {!changed && isRevised && freshCheck ? (
                 <button
+                  onClick={() => setOpenIndex(null)}
                   disabled={isChecking}
+                  className="flex-1 bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold text-[13px] rounded-full py-2 transition"
+                >
+                  Done
+                </button>
+              ) : (
+                <button
+                  disabled={!changed || isChecking}
                   onClick={() =>
                     onRevise(openSegment.index, openSegment.start, openSegment.end, rewrite.trim())
                   }
@@ -336,14 +349,6 @@ export default function AnnotatedDraft({
                 >
                   <CheckIcon size={14} className="text-hy" />
                   {isRevised ? "Check my new try" : "Save my fix"}
-                </button>
-              ) : (
-                <button
-                  onClick={() => setOpenIndex(null)}
-                  disabled={isChecking}
-                  className="flex-1 bg-ink hover:bg-stone-700 disabled:opacity-30 text-white font-bold text-[13px] rounded-full py-2 transition"
-                >
-                  Done
                 </button>
               )}
               <button
