@@ -7,7 +7,7 @@ export interface ChildProfile {
 }
 
 export interface MeResponse {
-  features: { accounts: boolean; billing: boolean; metered: boolean; unlock: boolean };
+  features: { accounts: boolean; billing: boolean; metered: boolean; unlock: boolean; demo: boolean };
   signedIn: boolean;
   email?: string;
   pro: boolean;

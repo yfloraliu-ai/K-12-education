@@ -14,6 +14,19 @@ import type { Request, Response } from "express";
 const PASS_COOKIE = "mwc_pass";
 const PASS_DAYS = 365;
 
+/**
+ * Demo mode: the whole app, unmetered, with every trace of money removed —
+ * no credit counter, no paywall, no upgrade prompts, no unlock box, and the
+ * billing endpoints answering 404. For showing the platform to a teacher or a
+ * school without a price tag in the room.
+ *
+ * It is a single environment variable so it can be turned off again without
+ * touching code: unset DEMO_MODE and redeploy and everything comes back.
+ */
+export function demoMode(): boolean {
+  return /^(1|true|on|yes)$/i.test((process.env.DEMO_MODE ?? "").trim());
+}
+
 export function unlockCodes(): string[] {
   return (process.env.PRO_UNLOCK_CODES ?? "")
     .split(",")

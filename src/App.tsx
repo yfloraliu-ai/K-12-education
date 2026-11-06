@@ -93,6 +93,9 @@ export default function App() {
     );
   }
 
+  // Demo mode: the server reports pro and hides every billing feature, so the
+  // app has no paywall, no credit counter and no upgrade prompt to show.
+  const demo = !!me?.features.demo;
   const isPro = me?.pro ?? state.plan === "pro";
   // Server metering is the truth when it's switched on; otherwise the browser
   // keeps its own tally, as it did before accounts existed.
@@ -175,7 +178,9 @@ export default function App() {
     return <SignIn reason={signInReason} onExit={() => setView("home")} />;
   }
 
-  if (view === "paywall") {
+  // Nothing routes here in demo mode, but a stale view must never bring the
+  // price list back on screen.
+  if (view === "paywall" && !demo) {
     return (
       <Paywall
         used={creditsUsed}
@@ -232,6 +237,7 @@ export default function App() {
       onNewProject={startProject}
       onOpenProject={openProject}
       isPro={isPro}
+      demo={demo}
       email={me?.email}
       accountsReady={!!me?.features.accounts}
       onSignIn={() => {

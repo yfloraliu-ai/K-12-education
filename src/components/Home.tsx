@@ -16,6 +16,8 @@ interface Props {
   grade: Grade;
   projects: Project[];
   isPro: boolean;
+  /** Demo mode: show nothing about plans, credits or money at all. */
+  demo: boolean;
   email?: string;
   accountsReady: boolean;
   onSignIn: () => void;
@@ -34,6 +36,7 @@ export default function Home({
   grade,
   projects,
   isPro,
+  demo,
   email,
   accountsReady,
   onSignIn,
@@ -71,7 +74,7 @@ export default function Home({
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          {isPro ? (
+          {demo ? null : isPro ? (
             <span
               title={email}
               className="border-2 border-ink rounded-full px-4 py-2 font-bold text-sm bg-hy"
@@ -142,7 +145,7 @@ export default function Home({
             </div>
           )}
 
-          {!isPro && !canStartNew && (
+          {!demo && !isPro && !canStartNew && (
             <button
               onClick={onUpgrade}
               className="w-full border-2 border-ink rounded-lg p-5 mb-6 text-left hover:bg-hy transition flex items-center justify-between gap-4"

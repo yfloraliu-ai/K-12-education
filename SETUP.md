@@ -92,6 +92,34 @@ How it works, and what it does not do:
 Treat these codes like passwords: anyone who has one gets unlimited AI usage
 billed to your Anthropic key. Keep them out of the repository.
 
+## 5. Demo mode — showing the platform with no price tag
+
+Set `DEMO_MODE="1"` and the app runs unmetered with every trace of money
+removed. Use it when you are showing the platform to a teacher, a school, or
+anyone who should see the product rather than the pricing.
+
+What disappears:
+
+| | With `DEMO_MODE="1"` |
+|---|---|
+| "N free pieces left" button | gone |
+| "You've used your 3 free pieces" banner | gone |
+| Paywall, prices, Subscribe buttons | unreachable |
+| "Pro" badge | gone — it still implies tiers |
+| "Sign in" / unlock-code box | gone |
+| Three-piece limit | lifted; everyone writes as much as they like |
+| `/api/billing/checkout`, `/redeem`, `/portal` | answer **404**, so there is nothing to find by typing a URL |
+
+Everything else — the coach, the report card, the score, the journal, the
+Skill Gym — works exactly as normal.
+
+**To turn it off:** delete the `DEMO_MODE` variable (or set it to `0`) and
+redeploy. Credits, the paywall and the unlock box all come back as they were;
+nothing about the switch is one-way, and no writing is lost either way.
+
+Only `1`, `true`, `on` or `yes` switch it on, so `DEMO_MODE=0` leaves the app
+in its normal state.
+
 ## What is stored where
 
 | Data | Where |

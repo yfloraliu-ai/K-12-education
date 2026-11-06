@@ -23,7 +23,7 @@ import {
   syncSubscription,
 } from "./lib/billing.js";
 import { FREE_CREDITS, creditState, mayUseAi, spendCredit } from "./lib/credits.js";
-import { clearPass, codeIsValid, hasPass, issuePass, unlockConfigured } from "./lib/unlock.js";
+import { clearPass, codeIsValid, demoMode, hasPass, issuePass, unlockConfigured } from "./lib/unlock.js";
 import { splitSentences } from "./lib/sentences.js";
 
 /**
@@ -32,7 +32,7 @@ import { splitSentences } from "./lib/sentences.js";
  * deploy with only ANTHROPIC_API_KEY set.
  */
 function isPro(req: express.Request, account: Account | null): boolean {
-  return hasPass(req) || isSubscriptionActive(account);
+  return demoMode() || hasPass(req) || isSubscriptionActive(account);
 }
 
 /**
@@ -477,18 +477,21 @@ app.get("/api/health", async (req, res) => {
 
 /** What the browser needs to render the right plan and profiles. */
 app.get("/api/me", async (req, res) => {
+  const demo = demoMode();
   const features = {
-    accounts: dbConfigured() && emailConfigured(),
-    billing: dbConfigured() && billingConfigured(),
+    accounts: !demo && dbConfigured() && emailConfigured(),
+    billing: !demo && dbConfigured() && billingConfigured(),
     // Whether the server counts free pieces. When false the browser keeps its
     // own tally, which is how the app behaved before accounts existed.
-    metered: dbConfigured(),
+    metered: !demo && dbConfigured(),
     // Whether an unlock code can be redeemed at all on this deploy.
-    unlock: unlockConfigured(),
+    unlock: !demo && unlockConfigured(),
+    // Hides every mention of money in the client. See demoMode().
+    demo,
   };
   const account = await currentAccount(req);
   if (!account) {
-    const unlocked = hasPass(req);
+    const unlocked = demo || hasPass(req);
     const state = unlocked ? { used: 0, left: FREE_CREDITS } : await creditState(req.query.device);
     res.json({
       features,
@@ -602,6 +605,10 @@ app.delete("/api/children/:id", async (req, res) => {
 });
 
 app.post("/api/billing/checkout", async (req, res) => {
+  if (demoMode()) {
+    res.status(404).json({ error: "Not found." });
+    return;
+  }
   const account = await currentAccount(req);
   if (!account) {
     res.status(401).json({ error: "Please sign in before subscribing." });
@@ -626,6 +633,10 @@ app.post("/api/billing/checkout", async (req, res) => {
  * deploy with no database and no email, which is the default.
  */
 app.post("/api/billing/redeem", async (req, res) => {
+  if (demoMode()) {
+    res.status(404).json({ error: "Not found." });
+    return;
+  }
   if (!unlockConfigured()) {
     res.status(503).json({ error: "Unlock codes aren't switched on for this app." });
     return;
@@ -655,6 +666,10 @@ app.post("/api/billing/release", (_req, res) => {
 });
 
 app.post("/api/billing/portal", async (req, res) => {
+  if (demoMode()) {
+    res.status(404).json({ error: "Not found." });
+    return;
+  }
   const account = await currentAccount(req);
   if (!account) {
     res.status(401).json({ error: "Please sign in first." });
