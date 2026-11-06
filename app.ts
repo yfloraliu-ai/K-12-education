@@ -440,12 +440,41 @@ app.post(
 
 app.use(express.json({ limit: "1mb" }));
 
+/**
+ * Which build is actually live. "Did my push deploy?" is otherwise guesswork
+ * from the outside: the commit answers it exactly, and the feature list says
+ * in plain words what this build can do, so a missing feature can be told
+ * apart from an un-set environment variable.
+ */
+function buildInfo() {
+  const commit = (process.env.VERCEL_GIT_COMMIT_SHA ?? "").slice(0, 7);
+  return {
+    ...(commit ? { commit } : {}),
+    features: [
+      "score-badge",
+      "sentence-split-server-side",
+      "before-after-rewrite",
+      "fix-check",
+      "unlock-codes",
+      "demo-mode",
+    ],
+    switches: {
+      demoMode: demoMode(),
+      unlockCodes: unlockConfigured(),
+      database: dbConfigured(),
+      email: emailConfigured(),
+      billing: billingConfigured(),
+    },
+  };
+}
+
 app.get("/api/health", async (req, res) => {
   const base = {
     ok: true,
     model: CLAUDE_MODEL,
     keySet: !!process.env.ANTHROPIC_API_KEY,
     workspaceIdSet: !!process.env.ANTHROPIC_WORKSPACE_ID,
+    ...buildInfo(),
   };
   if (req.query.probe === undefined) {
     res.json(base);
