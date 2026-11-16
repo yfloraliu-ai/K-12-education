@@ -7,6 +7,7 @@ import Lessons from "./components/Lessons";
 import Journal from "./components/Journal";
 import Paywall from "./components/Paywall";
 import SignIn from "./components/SignIn";
+import Terms, { TERMS_VERSION } from "./components/Terms";
 import { fetchMe, spendCredit, type MeResponse } from "./services/account";
 
 const STORAGE_KEY = "maple-writing-coach-v1";
@@ -20,6 +21,8 @@ interface PersistedState {
   projects: Project[];
   lessonsDone: Record<string, boolean>;
   plan: Plan;
+  /** The terms version this browser agreed to, if any. */
+  termsVersion?: string;
 }
 
 function loadState(): PersistedState {
@@ -39,6 +42,7 @@ function loadState(): PersistedState {
         projects,
         lessonsDone: parsed.lessonsDone ?? {},
         plan: parsed.plan === "pro" ? "pro" : "free",
+        termsVersion: typeof parsed.termsVersion === "string" ? parsed.termsVersion : undefined,
       };
     }
   } catch {
@@ -47,7 +51,7 @@ function loadState(): PersistedState {
   return { name: "", grade: null, projects: [], lessonsDone: {}, plan: "free" };
 }
 
-type View = "home" | "studio" | "lessons" | "journal" | "paywall" | "signin";
+type View = "home" | "studio" | "lessons" | "journal" | "paywall" | "signin" | "terms";
 
 export default function App() {
   const [state, setState] = useState<PersistedState>(loadState);
@@ -81,6 +85,22 @@ export default function App() {
       // Storage full/blocked — the app still works, it just won't remember.
     }
   }, [state]);
+
+  // Nobody reaches the app without having been told what it does with their
+  // writing. A changed TERMS_VERSION asks again rather than counting an old
+  // agreement as agreement to words they never saw.
+  if (state.termsVersion !== TERMS_VERSION) {
+    return (
+      <Terms
+        mode="gate"
+        onAccept={() => setState((prev) => ({ ...prev, termsVersion: TERMS_VERSION }))}
+      />
+    );
+  }
+
+  if (view === "terms") {
+    return <Terms mode="review" onClose={() => setView("home")} />;
+  }
 
   if (!state.grade) {
     return (
@@ -238,6 +258,7 @@ export default function App() {
       onOpenProject={openProject}
       isPro={isPro}
       demo={demo}
+      onTerms={() => setView("terms")}
       email={me?.email}
       accountsReady={!!me?.features.accounts}
       onSignIn={() => {

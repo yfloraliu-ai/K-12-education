@@ -29,6 +29,7 @@ interface Props {
   onJournal: () => void;
   onLessons: () => void;
   onChangeGrade: () => void;
+  onTerms: () => void;
 }
 
 export default function Home({
@@ -48,6 +49,7 @@ export default function Home({
   onJournal,
   onLessons,
   onChangeGrade,
+  onTerms,
 }: Props) {
   const [picking, setPicking] = useState<GenreInfo | null>(null);
   const [customTopic, setCustomTopic] = useState("");
@@ -314,6 +316,18 @@ export default function Home({
           })()}
         </div>
       )}
+
+      <footer className="mt-12 pt-5 border-t-2 border-line">
+        <button
+          onClick={onTerms}
+          className="text-[12px] font-bold text-stone-400 hover:text-ink underline underline-offset-4 transition"
+        >
+          Privacy and terms
+        </button>
+        <p className="text-[12px] text-stone-400 mt-1.5 leading-relaxed">
+          Your writing stays in this browser and is never saved on a server.
+        </p>
+      </footer>
     </div>
   );
 }
