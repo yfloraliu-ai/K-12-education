@@ -7,6 +7,7 @@ import CoachChat from "./CoachChat";
 import Checklist from "./Checklist";
 import ReportCard from "./ReportCard";
 import AnnotatedDraft from "./AnnotatedDraft";
+import BeforeAfter from "./BeforeAfter";
 import ScoreBadge from "./ScoreBadge";
 import { baseScore, computeScore, SCORE_HISTORY_MAX } from "../lib/score";
 import {
@@ -570,6 +571,14 @@ export default function Studio({
                 error={reportError}
                 onRetry={loadReportCard}
               />
+              {card && (
+                <BeforeAfter
+                  draft={project.draft}
+                  card={card}
+                  originals={project.reportCard?.originals ?? {}}
+                  checks={checks}
+                />
+              )}
               <Checklist
                 items={checklist}
                 checked={project.checked}
