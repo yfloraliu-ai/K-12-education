@@ -6,7 +6,7 @@ import { LeafIcon } from "./icons";
  * asked again, rather than being counted as having agreed to words they never
  * saw.
  */
-export const TERMS_VERSION = "2026-11-16";
+export const TERMS_VERSION = "2026-11-17";
 
 /** Where to reach a human about this app. */
 const CONTACT = "maplewritingcoach@gmail.com";
@@ -85,8 +85,11 @@ export default function Terms({ mode, onAccept, onClose }: Props) {
             <p>
               Maple Writing Coach is a free practice tool that helps a student plan, draft and revise
               their own writing. It is a personal project, not a school system and not a commercial
-              service. It is offered as is, with no promise that it will keep working or stay
-              available.
+              service. Nothing is charged for it and no payment is taken.
+            </p>
+            <p>
+              It is offered as is. It may contain mistakes, it may be unavailable, and it may be
+              changed or withdrawn at any time without notice.
             </p>
           </Section>
 
@@ -113,6 +116,10 @@ export default function Terms({ mode, onAccept, onClose }: Props) {
               Because of this, students should not put private details into their writing: no last
               name, home address, phone number, school name, or anything else they would not want
               leaving the device.
+            </p>
+            <p>
+              Anthropic is a separate company and its own terms and policies govern what happens to
+              text once it reaches their API.
             </p>
           </Section>
 
@@ -141,16 +148,48 @@ export default function Terms({ mode, onAccept, onClose }: Props) {
             </p>
           </Section>
 
-          <Section title="7. Who may use this">
+          <Section title="7. The writing belongs to the student">
+            <p>
+              Anything a student writes here is theirs. The author of this app claims no ownership
+              of it and no right to use it, and never receives a copy of it in the first place.
+            </p>
+          </Section>
+
+          <Section title="8. Who may use this, and how">
             <p>
               This is made for elementary-aged students. A student under 13 should have a parent,
               guardian or teacher read this page with them and set the app up for them. By
               continuing, the adult confirms they have read this and agree to it on the student's
               behalf.
             </p>
+            <p>
+              Please use it for a student's own writing practice. If a school, teacher or class has
+              rules about using AI help on assignments, those rules come first. Do not use the app
+              to produce harmful content or deliberately interfere with how it works.
+            </p>
           </Section>
 
-          <Section title="8. Changes, and getting in touch">
+          <Section title="9. No warranty, and limits of responsibility">
+            <p>
+              There is no warranty of any kind, express or implied. The coach's grades, corrections
+              and suggestions are not guaranteed to be correct.
+            </p>
+            <p>
+              So far as the law allows, the author is not responsible for work that is lost or
+              deleted, for decisions made on the basis of the coach's feedback, or for any loss that
+              follows from using the app. Nothing on this page limits any responsibility that cannot
+              be limited by law.
+            </p>
+          </Section>
+
+          <Section title="10. Where this applies">
+            <p>
+              This page is governed by the law of the Province of Alberta and the laws of Canada
+              that apply there.
+            </p>
+          </Section>
+
+          <Section title="11. Changes, and getting in touch">
             <p>
               These terms may change; the date below is the version in force. With questions, or to
               ask that the app stop being made available to a particular student, contact{" "}
