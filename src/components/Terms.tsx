@@ -8,8 +8,8 @@ import { LeafIcon } from "./icons";
  */
 export const TERMS_VERSION = "2026-11-16";
 
-/** Where to reach a human. Replace before sharing the app widely. */
-const CONTACT = "[your contact email]";
+/** Where to reach a human about this app. */
+const CONTACT = "maplewritingcoach@gmail.com";
 
 interface Props {
   /** "gate": shown before first use and must be accepted. "review": read-only. */
